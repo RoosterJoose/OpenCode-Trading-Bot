@@ -1,0 +1,18 @@
+[project]
+name = "hermes-v2"
+version = "0.2.0"
+description = "Regime-aware perp trading bot — Hyperliquid, semi-auto, learning"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "websockets>=12.0",
+]
+
+[project.scripts]
+hermes = "src.main:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
