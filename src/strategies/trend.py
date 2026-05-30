@@ -73,7 +73,10 @@ class TrendFollow(PerpStrategy):
             return None
 
         cross_above = prev_fast <= prev_slow and ema_fast > ema_slow
-        if not cross_above:
+        continuation = ema_fast > ema_slow and last.close > ema_fast
+        # Avoid chasing extended candles: continuation entries must be near the fast EMA.
+        near_fast_ema = ((last.close - ema_fast) / ema_fast) <= 0.012 if ema_fast else False
+        if not cross_above and not (continuation and near_fast_ema):
             return None
 
         adx = self._adx(candles)
@@ -84,7 +87,7 @@ class TrendFollow(PerpStrategy):
         entry_price = last.close
 
         confidence = 0.5
-        sources = ["ema_cross", "adx_confirmed"]
+        sources = ["ema_cross" if cross_above else "trend_continuation", "adx_confirmed"]
         if regime == RegimeType.STRONGLY_TRENDING:
             confidence += 0.2
             sources.append("strong_trend")

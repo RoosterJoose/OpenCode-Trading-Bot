@@ -16,6 +16,8 @@ import json
 import os
 import sqlite3
 import sys
+import time
+import urllib.request
 from functools import lru_cache
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
@@ -23,6 +25,8 @@ from typing import Any
 
 # Resolve project root
 _repo = Path(__file__).resolve().parent.parent.parent
+ASSETS = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT"]
+_MARKET_CACHE = {"ts": 0.0, "data": []}
 
 HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -88,20 +92,20 @@ HTML = """<!DOCTYPE html>
   </main>
 </div>
 <script>
-const ASSETS=['BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','LINK','DOT'];let state={status:{},trades:[],positions:[],equity:[],signals:[],reflection:{},range:'1M',query:''};
+const ASSETS=['BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','LINK','DOT'];let state={status:{},trades:[],positions:[],equity:[],signals:[],reflection:{},markets:[],range:'1M',query:''};
 const fmtUSD=n=>'$'+Number(n||0).toLocaleString(undefined,{maximumFractionDigits:2});const pct=n=>(Number(n||0)>=0?'+':'')+Number(n||0).toFixed(2)+'%';const cls=n=>Number(n||0)>=0?'positive':'negative';
 function now(){const d=new Date();document.getElementById('today').textContent=d.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'});document.getElementById('clock').textContent=d.toISOString().slice(11,19)}setInterval(now,1000);now();
 function drawLine(id, pts, color='#1d9bff', fill=true){const c=document.getElementById(id);if(!c)return;const r=c.getBoundingClientRect();c.width=Math.max(40,r.width*devicePixelRatio);c.height=Math.max(28,r.height*devicePixelRatio);const x=c.getContext('2d');x.scale(devicePixelRatio,devicePixelRatio);const w=r.width,h=r.height;x.clearRect(0,0,w,h);if(!pts||pts.length<2){pts=[0,1,0.6,1.4,1.2,1.8]}const min=Math.min(...pts),max=Math.max(...pts),rng=max-min||1;x.beginPath();pts.forEach((p,i)=>{const xx=i/(pts.length-1)*w;const yy=h-8-((p-min)/rng)*(h-16);i?x.lineTo(xx,yy):x.moveTo(xx,yy)});x.strokeStyle=color;x.lineWidth=2;x.stroke();if(fill){x.lineTo(w,h);x.lineTo(0,h);x.closePath();const g=x.createLinearGradient(0,0,0,h);g.addColorStop(0,color+'55');g.addColorStop(1,color+'00');x.fillStyle=g;x.fill()}}
 function equitySlice(){const map={ '1D':24,'1W':7*24,'1M':31*24,'3M':93*24};return state.equity.slice(-Math.min(state.equity.length,map[state.range]||state.equity.length)).map(p=>Number(p.equity||0))}
 function renderKpis(){const s=state.status,p=state.positions,eq=Number(s.equity||10000),peak=Number(s.peak_equity||eq),dd=peak?((peak-eq)/peak*100):0,exp=Number(s.gross_exposure||0),lev=Number(s.effective_leverage||0),expPct=Math.min(100,exp/(eq*3||1)*100);document.getElementById('equity').textContent=fmtUSD(eq);document.getElementById('curve-equity').textContent=fmtUSD(eq);document.getElementById('equity-sub').textContent=pct(s.daily_pnl_pct||0)+' today';document.getElementById('curve-change').textContent=pct(((eq-10000)/10000)*100)+' all time';document.getElementById('daily-pnl').textContent=fmtUSD((eq-10000));document.getElementById('daily-pnl-sub').textContent=pct(s.daily_pnl_pct||0);document.getElementById('weekly-pnl').textContent=fmtUSD((eq-10000));document.getElementById('weekly-pnl-sub').textContent=pct(((eq-10000)/10000)*100);document.getElementById('win-rate').textContent=s.win_rate?(s.win_rate*100).toFixed(1)+'%':'0.0%';document.getElementById('profit-factor').textContent=s.profit_factor?Number(s.profit_factor).toFixed(2):'—';document.getElementById('profit-sub').textContent=s.profit_factor?'+ live':'waiting for trades';document.getElementById('exposure-pct').textContent=expPct.toFixed(1)+'%';document.getElementById('exposure-bar').style.width=expPct+'%';document.getElementById('active-positions').textContent=p.length;document.getElementById('positions-sub').textContent='Across '+ASSETS.length+' pairs';document.getElementById('drawdown').textContent=dd.toFixed(2)+'% / 5.00%';document.getElementById('dd-bar').style.width=Math.min(100,dd/5*100)+'%';document.getElementById('leverage').textContent=lev.toFixed(2)+'x / 3.0x';document.getElementById('lev-bar').style.width=Math.min(100,lev/3*100)+'%';document.getElementById('limit-text').textContent=expPct.toFixed(1)+'% / 100%';document.getElementById('limit-bar').style.width=expPct+'%';document.getElementById('risk-ring').textContent=Math.round(Math.max(dd/5*100,expPct))+'%';document.getElementById('side-mode').textContent=(s.mode||'paper').toUpperCase();['spark-equity','spark-daily','spark-weekly','spark-profit','spark-pos'].forEach((id,i)=>drawLine(id,equitySlice().slice(-40),i===3?'#7d3cff':'#1d9bff',false));drawLine('equity-chart',equitySlice(),'#1d9bff',true)}
-function renderMarkets(){const heat=document.getElementById('heatmap');heat.innerHTML=ASSETS.map((a,i)=>{const n=[2.35,1.62,4.21,-0.21,2.11,3.25,1.74,2.08,-0.35,1.03][i];return '<div class="'+(n<0?'red':'')+'">'+a+'<br><span class="'+(n<0?'loss':'gain')+'">'+pct(n)+'</span></div>'}).join('');document.getElementById('market-regime').textContent=state.positions.length?'Active Risk':'Watching';document.getElementById('volatility').textContent=(state.status.effective_leverage||0)>2?'Elevated':'Normal'}
+function renderMarkets(){const heat=document.getElementById('heatmap');const markets=state.markets.length?state.markets:ASSETS.map(a=>({asset:a,change_24h:0,price:0,funding:0,volume_24h:0}));heat.innerHTML=markets.map(m=>{const n=Number(m.change_24h||0);return '<div class="'+(n<0?'red':'')+'">'+m.asset+'<br><span class="'+(n<0?'loss':'gain')+'">'+pct(n)+'</span></div>'}).join('');const btc=markets.find(m=>m.asset==='BTC')||{};document.getElementById('market-regime').textContent=state.positions.length?'Active Risk':(Number(btc.change_24h||0)>1?'Bullish Trend':'Watching');document.getElementById('volatility').textContent=(state.status.effective_leverage||0)>2?'Elevated':'Normal';document.getElementById('funding').textContent=btc.funding!==undefined?(Number(btc.funding)*100).toFixed(4)+'%':'Enabled'}
 function renderStrategies(){const trades=state.trades;const by=n=>trades.filter(t=>(t.strategy||'').toLowerCase().includes(n));const cards=[['Mean Reversion','mr','Active','#10e6ff'],['Trend Following','trend','Active','#7d3cff'],['Breakout','breakout','Paused','#ffb11a'],['Scanner Health','scanner','Active','#ff8a00']];document.getElementById('strategy-cards').innerHTML=cards.map(([name,key,tag,color])=>{const ts=by(key),wins=ts.filter(t=>Number(t.pnl_pct)>0).length,wr=ts.length?wins/ts.length*100:0;return '<div class="strategy"><span class="tag">'+tag+'</span><h4 style="margin:0 0 18px;color:'+color+'">'+name+'</h4><table><tr><th>Trades</th><th>Win Rate</th><th>Avg R</th></tr><tr><td>'+ts.length+'</td><td>'+(wr?wr.toFixed(0):'—')+'%</td><td>'+((ts.reduce((a,t)=>a+Number(t.r_multiple||0),0)/(ts.length||1)).toFixed(2))+'R</td></tr></table><canvas class="spark" id="spark-'+key+'"></canvas></div>'}).join('');cards.forEach(([_,key,,color])=>drawLine('spark-'+key,equitySlice().slice(-24),color,false))}
 function renderPositions(){const tbody=document.getElementById('positions-body');document.getElementById('position-count').textContent=state.positions.length;if(!state.positions.length){tbody.innerHTML='<tr><td colspan="8" class="empty">No open paper positions yet. The bot is waiting for valid setups.</td></tr>';return}tbody.innerHTML=state.positions.map(p=>{const price=Number(p.entry_price||0)+Number(p.unrealized_pnl||0)/(Number(p.size||1));return '<tr><td>'+p.asset+'/USDT</td><td><span class="badge '+(p.side==='long'?'positive':'negative')+'">'+p.side+'</span></td><td>'+fmtUSD(p.entry_price)+'</td><td>'+fmtUSD(price)+'</td><td class="'+cls(p.unrealized_pnl)+'">'+fmtUSD(p.unrealized_pnl)+'</td><td>'+fmtUSD(p.stop_loss||0)+'</td><td>'+Number(p.leverage||0).toFixed(1)+'x</td><td>'+Number(p.size||0).toFixed(4)+'</td></tr>'}).join('')}
-function renderWatchlist(){const q=state.query.toUpperCase();document.getElementById('watchlist').innerHTML=ASSETS.filter(a=>!q||a.includes(q)).map((a,i)=>{const conf=Math.max(42,86-i*4),rsi=(63.2-i*1.7).toFixed(1),price={BTC:73850,ETH:2025,SOL:82.65,BNB:688.9,XRP:1.34,DOGE:.101,ADA:.236,AVAX:8.96,LINK:9.21,DOT:1.19}[a];const sig=conf>80?'Strong Buy':conf>58?'+ Buy':'Neutral';return '<tr><td>'+(i+1)+'</td><td>'+a+'/USDT</td><td>'+fmtUSD(price)+'</td><td>'+rsi+'</td><td class="gain">↑</td><td>'+(1.2+i/5).toFixed(1)+'x</td><td><div style="display:flex;gap:8px;align-items:center"><div class="confidence"><span style="width:'+conf+'%"></span></div>'+conf+'</div></td><td><span class="badge '+(sig==='Neutral'?'neutral':'positive')+'">'+sig+'</span></td></tr>'}).join('')}
+function renderWatchlist(){const q=state.query.toUpperCase();const markets=(state.markets.length?state.markets:ASSETS.map(a=>({asset:a,price:0,change_24h:0,volume_24h:0}))).filter(m=>!q||m.asset.includes(q));document.getElementById('watchlist').innerHTML=markets.map((m,i)=>{const n=Number(m.change_24h||0),conf=Math.max(35,Math.min(92,55+n*8)),rsi=Math.max(25,Math.min(78,50+n*4)).toFixed(1),sig=conf>78?'Strong Buy':conf>58?'+ Buy':n<0?'Caution':'Neutral';return '<tr><td>'+(i+1)+'</td><td>'+m.asset+'/USDT</td><td>'+fmtUSD(m.price)+'</td><td>'+rsi+'</td><td class="'+(n>=0?'gain':'loss')+'">'+(n>=0?'↑':'↓')+'</td><td>'+(Number(m.volume_24h||0)>0?'live':'—')+'</td><td><div style="display:flex;gap:8px;align-items:center"><div class="confidence"><span style="width:'+conf+'%"></span></div>'+Math.round(conf)+'</div></td><td><span class="badge '+(sig==='Caution'?'negative':sig==='Neutral'?'neutral':'positive')+'">'+sig+'</span></td></tr>'}).join('')}
 function renderActivity(){const sigs=state.signals.slice(-8).reverse();const acts=[...sigs.map(s=>({t:(s.time||'').slice(11,16),b:'Signal Detected',d:(s.side||'').toUpperCase()+' '+s.asset+' '+(s.strategy||'')+' conf '+Math.round((s.confidence||0)*100)+'%'})),...state.trades.slice(0,4).map(t=>({t:(t.exit_time||'').slice(11,16),b:'Trade Closed',d:t.asset+' '+(Number(t.pnl_pct||0)>=0?'+':'')+Number(t.pnl_pct||0).toFixed(2)+'%'}))];document.getElementById('activity').innerHTML=(acts.length?acts:[{t:'now',b:'System Nominal',d:'Heartbeat, dashboard, and health timer active.'}]).slice(0,6).map(a=>'<div class="event"><small>'+a.t+'</small><div class="pin"></div><div><b>'+a.b+'</b><span class="sub">'+a.d+'</span></div></div>').join('')}
 function renderReflection(){const r=state.reflection;let html='<p><b>Today&#39;s Summary</b></p><p class="sub">Paper mode active. Local TA and Altfins metrics are both feeding entry confidence. Health checks restart the bot if snapshots go stale.</p>';if(r&&r.suggestions&&r.suggestions.length){html+='<p><b>Pending Suggestions</b></p>'+r.suggestions.map(s=>'<p class="sub">'+s.parameter+': '+s.current_value+' → '+s.suggested_value+'</p>').join('')}else html+='<p><b>Key Lesson</b></p><p class="sub">Reflection runs after enough closed paper trades.</p>';document.getElementById('reflection').innerHTML=html}
-async function load(){try{const [status,trades,positions,equity,signals,reflection]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection};renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection()}catch(e){console.error(e)}}
-document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-range]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.range=b.dataset.range;renderKpis()});document.getElementById('search').addEventListener('input',e=>{state.query=e.target.value;renderWatchlist()});window.addEventListener('resize',()=>renderKpis());load();setInterval(load,15000);
+async function load(){try{const [status,trades,positions,equity,signals,reflection,markets]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection','/api/markets'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection,markets};renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection()}catch(e){console.error(e)}}
+document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-range]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.range=b.dataset.range;renderKpis()});document.getElementById('search').addEventListener('input',e=>{state.query=e.target.value;renderWatchlist()});window.addEventListener('resize',()=>renderKpis());load();setInterval(load,60000);
 </script>
 </body>
 </html>"""
@@ -142,6 +146,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             "/api/trades": self._api_trades,
             "/api/positions": self._api_positions,
             "/api/equity": self._api_equity,
+            "/api/markets": self._api_markets,
             "/api/signals": self._api_signals,
             "/api/reflection": self._api_reflection,
         }
@@ -219,6 +224,42 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self._send_json([])
         finally:
             conn.close()
+
+    def _api_markets(self):
+        now = time.time()
+        if now - _MARKET_CACHE["ts"] < 55 and _MARKET_CACHE["data"]:
+            self._send_json(_MARKET_CACHE["data"])
+            return
+        try:
+            req = urllib.request.Request(
+                "https://api.hyperliquid.xyz/info",
+                data=json.dumps({"type": "metaAndAssetCtxs"}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                meta, ctxs = json.loads(resp.read().decode())
+            markets = []
+            for coin, ctx in zip(meta.get("universe", []), ctxs):
+                asset = coin.get("name", "")
+                if asset not in ASSETS:
+                    continue
+                mark = float(ctx.get("markPx") or ctx.get("midPx") or 0)
+                prev = float(ctx.get("prevDayPx") or 0)
+                change = ((mark - prev) / prev * 100) if mark and prev else 0.0
+                markets.append({
+                    "asset": asset,
+                    "price": mark,
+                    "change_24h": change,
+                    "funding": float(ctx.get("funding") or 0),
+                    "open_interest": float(ctx.get("openInterest") or 0),
+                    "volume_24h": float(ctx.get("dayNtlVlm") or 0),
+                })
+            markets.sort(key=lambda m: ASSETS.index(m["asset"]))
+            _MARKET_CACHE.update({"ts": now, "data": markets})
+            self._send_json(markets)
+        except Exception:
+            self._send_json(_MARKET_CACHE["data"] or [])
 
     def _api_signals(self):
         conn = self._connect()

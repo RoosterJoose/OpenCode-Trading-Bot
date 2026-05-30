@@ -275,11 +275,13 @@ class TradingLoop:
         if not funding_ok:
             return
 
+        regime = self._infer_regime(candles)
+
         # Evaluate entries
         for strat in self.strategies:
             sig_bucket = f"{strat.name()}:{asset}"
             all_signals = altfins_sigs + self.signal_cache.get("all", [])
-            result = strat.should_enter(asset, candles, all_signals, RegimeType.RANDOM_WALK, pos, funding_rate)
+            result = strat.should_enter(asset, candles, all_signals, regime, pos, funding_rate)
             if result is None:
                 continue
 
@@ -351,6 +353,32 @@ class TradingLoop:
             if self._suggested_params:
                 self.store.put_state("pending_param_changes", self._suggested_params)
                 logger.info("PENDING PARAM CHANGES: %d suggestions", len(self._suggested_params))
+
+    def _infer_regime(self, candles: list[PerpCandle]) -> RegimeType:
+        if len(candles) < 60:
+            return RegimeType.RANDOM_WALK
+
+        closes = [c.close for c in candles]
+        sma20 = sum(closes[-20:]) / 20
+        sma50 = sum(closes[-50:]) / 50
+        last = closes[-1]
+        trend_gap = (sma20 - sma50) / sma50 if sma50 else 0.0
+
+        trs = []
+        for i in range(-14, 0):
+            h, l, pc = candles[i].high, candles[i].low, candles[i - 1].close
+            trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+        atr_pct = (sum(trs) / len(trs)) / last if trs and last else 0.0
+
+        if atr_pct > 0.035:
+            return RegimeType.HIGH_VOL
+        if last > sma20 > sma50 and trend_gap > 0.012:
+            return RegimeType.STRONGLY_TRENDING
+        if last > sma20 > sma50 and trend_gap > 0.004:
+            return RegimeType.TRENDING
+        if abs(trend_gap) < 0.003:
+            return RegimeType.MEAN_REVERTING
+        return RegimeType.RANDOM_WALK
 
     async def _close(
         self,
