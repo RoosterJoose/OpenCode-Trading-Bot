@@ -20,7 +20,7 @@ class TrendFollow(PerpStrategy):
         adx_threshold: float = 25.0,
         atr_period: int = 14,
         atr_chandelier_mult: float = 2.5,
-        min_volume_usd: float = 30_000_000,
+        min_volume_usd: float = 5_000_000,
         cooldown_cycles: int = 60,
         majors: set | None = None,
     ):
