@@ -16,6 +16,7 @@ Main trading loop — Hyperliquid perps with semi-auto mode.
 import asyncio
 import json
 import logging
+import os
 import signal as sig
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
