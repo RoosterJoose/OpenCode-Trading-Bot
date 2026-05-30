@@ -8,7 +8,7 @@
   "margin_mode": "isolated",
   "max_open_trades": 3,
   "stake_currency": "USDC",
-  "stake_amount": "unlimited",
+  "stake_amount": 1000,
   "tradable_balance_ratio": 0.99,
   "timeframe": "1h",
   "fiat_display_currency": "USD",
