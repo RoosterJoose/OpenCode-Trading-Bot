@@ -1,11 +1,13 @@
 """
 Trend-following strategy for perps — EMA crossover + ADX with perp-aware exits.
 
-Only enters in trending regimes. Uses chandelier exit with ATR.
+Only enters in trending regimes. Uses chandelier exit with ATR,
+switching to Parabolic SAR for exits after 48h to lock in profits.
 Cooldown between trend entries to avoid whipsaw.
 """
 
 from typing import Optional
+from datetime import datetime, timezone
 
 from src.core.types import PerpCandle, PerpPosition, RegimeType, Side, Signal
 from src.strategies.base import PerpStrategy
@@ -18,8 +20,11 @@ class TrendFollow(PerpStrategy):
         slow_period: int = 21,
         adx_period: int = 14,
         adx_threshold: float = 25.0,
-        atr_period: int = 24,
-        atr_chandelier_mult: float = 3.0,
+        atr_period: int = 22,
+        atr_chandelier_mult: float = 3.5,
+        psar_step: float = 0.015,
+        psar_max_af: float = 0.18,
+        psar_switch_hours: float = 48.0,
         min_volume_usd: float = 5_000_000,
         cooldown_cycles: int = 60,
         majors: set | None = None,
@@ -30,6 +35,9 @@ class TrendFollow(PerpStrategy):
         self.adx_threshold = adx_threshold
         self.atr_period = atr_period
         self.atr_chandelier_mult = atr_chandelier_mult
+        self.psar_step = psar_step
+        self.psar_max_af = psar_max_af
+        self.psar_switch_hours = psar_switch_hours
         self.min_volume_usd = min_volume_usd
         self.cooldown_cycles = cooldown_cycles
         self.majors = majors or {"BTC", "ETH"}
@@ -132,11 +140,20 @@ class TrendFollow(PerpStrategy):
         if atr <= 0:
             return None
 
+        # Chandelier exit (primary trailing method)
         atr_dist = atr * self.atr_chandelier_mult
-        min_dist = 0.015 * current_price  # 1.5% minimum
-        max_dist = 0.04 * current_price   # 4.0% maximum
+        min_dist = 0.015 * current_price
+        max_dist = 0.04 * current_price
         stop_dist = max(min_dist, min(max_dist, atr_dist))
         chandelier = max(c.high for c in candles[-self.atr_period:]) - stop_dist
+
+        # Switch to PSAR after position has been open > N hours
+        age_hours = (datetime.now(timezone.utc) - position.entry_time).total_seconds() / 3600
+        if age_hours > self.psar_switch_hours:
+            psar = self._psar(candles)
+            if psar is not None and current_price <= psar:
+                return "psar", current_price
+
         if current_price <= chandelier:
             return "chandelier", current_price
 
@@ -189,3 +206,37 @@ class TrendFollow(PerpStrategy):
         ndi = (sum(minus_dm[-self.adx_period:]) / self.adx_period) / atr_p * 100
         dx = abs(pdi - ndi) / (pdi + ndi) * 100 if (pdi + ndi) > 0 else 0
         return dx
+
+    def _psar(self, candles: list[PerpCandle]) -> Optional[float]:
+        if len(candles) < 5:
+            return None
+        highs = [c.high for c in candles]
+        lows = [c.low for c in candles]
+        sar = lows[0]
+        ep = highs[0]
+        af = self.psar_step
+        is_up = True
+        for i in range(1, len(candles)):
+            if is_up:
+                sar = sar + af * (ep - sar)
+                sar = min(sar, lows[i - 1])
+                if highs[i] > ep:
+                    ep = highs[i]
+                    af = min(af + self.psar_step, self.psar_max_af)
+                if lows[i] < sar:
+                    is_up = False
+                    sar = ep
+                    ep = lows[i]
+                    af = self.psar_step
+            else:
+                sar = sar - af * (sar - ep)
+                sar = max(sar, highs[i - 1])
+                if lows[i] < ep:
+                    ep = lows[i]
+                    af = min(af + self.psar_step, self.psar_max_af)
+                if highs[i] > sar:
+                    is_up = True
+                    sar = ep
+                    ep = highs[i]
+                    af = self.psar_step
+        return sar if is_up else None

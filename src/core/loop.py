@@ -380,15 +380,27 @@ class TradingLoop:
         if norm_vol < 0.0015:
             return RegimeType.DEAD_MARKET
 
-        # Hurst exponent for structural regime classification
+        # Joint classification: Hurst (memory) + Efficiency Ratio (direction/noise)
         h = self._hurst(closes)
+        er = self._efficiency_ratio(closes)
 
-        if h < 0.45:
-            return RegimeType.MEAN_REVERTING
-        elif h <= 0.55:
-            return RegimeType.RANDOM_WALK
-        else:
+        if h > 0.55 and er > 0.60:
+            return RegimeType.STRONGLY_TRENDING
+        if h > 0.55:
             return RegimeType.TRENDING
+        if h < 0.45 and er < 0.30:
+            return RegimeType.MEAN_REVERTING
+        return RegimeType.RANDOM_WALK
+
+    @staticmethod
+    def _efficiency_ratio(closes: list[float], period: int = 14) -> float:
+        if len(closes) < period + 1:
+            return 0.5
+        direction = abs(closes[-1] - closes[-period - 1])
+        volatility = sum(abs(closes[i] - closes[i - 1]) for i in range(-period, 0))
+        if volatility == 0:
+            return 0.5
+        return direction / volatility
 
     @staticmethod
     def _hurst(prices: list[float]) -> float:
