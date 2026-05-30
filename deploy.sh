@@ -61,6 +61,7 @@ WantedBy=multi-user.target
 SERVICE
 
 echo "==> 6. Creating auto-update timer (checks every 5 min)..."
+sudo mkdir -p /opt/hermes-trading-bot/scripts
 sudo tee /opt/hermes-trading-bot/scripts/auto-update.sh > /dev/null <<'UPDATE'
 #!/usr/bin/env bash
 export GIT_SSH_COMMAND="ssh -i /home/hermes/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new"
