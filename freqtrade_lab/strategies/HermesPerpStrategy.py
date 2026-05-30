@@ -14,7 +14,7 @@ class HermesPerpStrategy(IStrategy):
     startup_candle_count = 150
     minimal_roi = {}
     stoploss = -0.04
-    use_custom_stoploss = True
+    use_custom_stoploss = False
     use_exit_signal = True
     process_only_new_candles = True
 
@@ -179,14 +179,19 @@ class HermesPerpStrategy(IStrategy):
         if dataframe.empty:
             return None
         row = dataframe.iloc[-1]
+        entry = trade.open_rate
+
+        # Compute stop distance (ATR-based, clamped [1.5%, 4.0%])
+        atr_pct = float(row.get("atr_pct", 0) or 0) / 100
+        mult = self.atr_stop_major if pair.startswith(("BTC/", "ETH/")) else self.atr_stop_alt
+        stop_dist_pct = max(self.stop_min_pct / 100, min(atr_pct * mult, self.stop_max_pct / 100))
+        stop_price = entry * (1 - stop_dist_pct)
 
         if trade.enter_tag is not None and trade.enter_tag.startswith("mr"):
-            if trade.stop_loss and current_rate <= trade.stop_loss:
+            if current_rate <= stop_price:
                 return "stop_loss"
-            entry = trade.open_rate
-            stop = trade.stop_loss or (entry * 0.985)
-            risk_r = (entry - stop) / entry if stop < entry else 0.01
-            r_mult = (current_rate - entry) / max(entry - stop, 0.001) if risk_r > 0 else 0
+            risk_r = stop_dist_pct
+            r_mult = (current_rate - entry) / (entry * risk_r) if risk_r > 0 else 0
             if r_mult >= self.mr_tp3_r_mult:
                 return "mr_tp3"
             if r_mult >= self.mr_tp2_r_mult:
@@ -195,7 +200,7 @@ class HermesPerpStrategy(IStrategy):
                 return "mr_tp1"
 
         if trade.enter_tag is not None and trade.enter_tag.startswith("trend"):
-            if trade.stop_loss and current_rate <= trade.stop_loss:
+            if current_rate <= stop_price:
                 return "stop_loss"
 
             atr_val = float(row.get("atr", 0))
@@ -203,10 +208,9 @@ class HermesPerpStrategy(IStrategy):
                 atr_dist = atr_val * self.trend_chandelier_mult
                 min_dist = self.stop_min_pct / 100 * current_rate
                 max_dist = self.stop_max_pct / 100 * current_rate
-                stop_dist = max(min_dist, min(max_dist, atr_dist))
-
+                chandelier_dist = max(min_dist, min(max_dist, atr_dist))
                 highs = dataframe["high"].iloc[-self.trend_atr_period:]
-                chandelier = highs.max() - stop_dist
+                chandelier = highs.max() - chandelier_dist
                 if current_rate <= chandelier:
                     return "chandelier"
 
@@ -222,17 +226,6 @@ class HermesPerpStrategy(IStrategy):
                 return "ema_death_cross"
 
         return None
-
-    def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
-                        current_rate: float, current_profit: float, after_fill: bool,
-                        **kwargs) -> float | None:
-        dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-        if dataframe.empty:
-            return -0.04
-        atr_pct = float(dataframe.iloc[-1].get("atr_pct", 0) or 0)
-        mult = self.atr_stop_major if pair.startswith(("BTC/", "ETH/")) else self.atr_stop_alt
-        stop_pct = max(self.stop_min_pct, min(atr_pct * mult, self.stop_max_pct))
-        return -stop_pct / 100
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float,
                  proposed_leverage: float, max_leverage: float,
