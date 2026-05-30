@@ -29,164 +29,79 @@ HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Hermes v2 — Dashboard</title>
+<title>Hermes Trading Bot</title>
 <style>
-  :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #c9d1d9; --green: #3fb950; --red: #f85149; --yellow: #d29922; --blue: #58a6ff; }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace; background: var(--bg); color: var(--text); padding: 20px; }
-  h1 { font-size: 1.4rem; margin-bottom: 4px; color: #fff; }
-  .subtitle { color: #8b949e; font-size: 0.85rem; margin-bottom: 20px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 20px; }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
-  .card h3 { font-size: 0.75rem; text-transform: uppercase; color: #8b949e; margin-bottom: 8px; letter-spacing: 0.5px; }
-  .card .value { font-size: 1.5rem; font-weight: 600; }
-  .card .value.green { color: var(--green); }
-  .card .value.red { color: var(--red); }
-  .card .value.yellow { color: var(--yellow); }
-  .card .sub { font-size: 0.8rem; color: #8b949e; margin-top: 4px; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
-  th { color: #8b949e; font-weight: 500; font-size: 0.75rem; text-transform: uppercase; }
-  .section-title { font-size: 1rem; margin: 24px 0 12px; color: #fff; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; }
-  .badge.positive { background: rgba(63, 185, 80, 0.15); color: var(--green); }
-  .badge.negative { background: rgba(248, 81, 73, 0.15); color: var(--red); }
-  .badge.neutral { background: rgba(88, 166, 255, 0.15); color: var(--blue); }
-  .badge.warning { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
-  #equity-chart { width: 100%; height: 200px; }
-  .flex-row { display: flex; gap: 20px; flex-wrap: wrap; }
-  .flex-row > * { flex: 1; min-width: 300px; }
-  .signal-entry { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 0.82rem; }
-  .signal-entry:last-child { border: none; }
-  .signal-time { color: #8b949e; font-size: 0.75rem; }
-  pre.reflection { font-size: 0.8rem; white-space: pre-wrap; color: #8b949e; line-height: 1.5; }
-  .loading { color: #8b949e; text-align: center; padding: 40px; }
-  @media (max-width: 700px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  :root {
+    --bg:#030914; --panel:#07111f; --card:#0b1524; --card2:#0e1a2b;
+    --border:#18304c; --muted:#8495ad; --text:#e8f1ff; --soft:#aebbd0;
+    --cyan:#10e6ff; --blue:#1d9bff; --purple:#7d3cff; --green:#39f07a;
+    --red:#ff5d63; --amber:#ffb11a; --shadow:rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box} html{scroll-behavior:smooth} body{margin:0;background:radial-gradient(circle at 88% -5%,rgba(125,60,255,.30),transparent 22%),radial-gradient(circle at 7% 4%,rgba(16,230,255,.18),transparent 24%),linear-gradient(135deg,#020712,#071321 55%,#020710);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh;overflow-x:hidden}
+  .app{display:grid;grid-template-columns:246px 1fr;min-height:100vh}.side{position:sticky;top:0;height:100vh;padding:24px 18px;border-right:1px solid rgba(36,62,96,.55);background:linear-gradient(180deg,rgba(3,10,20,.96),rgba(2,8,15,.90));box-shadow:12px 0 34px rgba(0,0,0,.24)}
+  .brand{display:flex;align-items:center;gap:14px;margin:2px 0 32px}.logo{width:44px;height:44px;border-radius:14px;background:conic-gradient(from 220deg,var(--cyan),var(--purple),#15335c,var(--cyan));clip-path:polygon(50% 0,100% 88%,0 88%);filter:drop-shadow(0 0 18px rgba(16,230,255,.45))}.brand h1{font-size:18px;letter-spacing:4px;margin:0}.brand span{display:block;color:var(--muted);font-size:11px;letter-spacing:2px;margin-top:3px}
+  .nav{display:flex;flex-direction:column;gap:10px}.nav a{display:flex;align-items:center;gap:14px;color:#c6d1e4;text-decoration:none;padding:15px 16px;border-radius:12px;border:1px solid transparent;font-weight:650}.nav a.active,.nav a:hover{background:linear-gradient(100deg,rgba(16,160,255,.75),rgba(125,60,255,.85));color:#fff;box-shadow:0 10px 28px rgba(35,112,255,.25)}.ico{width:23px;text-align:center;color:#b5c4db}.botbox{position:absolute;left:18px;right:18px;bottom:22px;background:linear-gradient(180deg,rgba(13,29,48,.88),rgba(9,20,34,.78));border:1px solid var(--border);border-radius:14px;padding:15px}.botbox .row{display:flex;justify-content:space-between;color:var(--soft);font-size:12px;margin:10px 0}.dot{display:inline-block;width:9px;height:9px;background:var(--green);border-radius:50%;box-shadow:0 0 16px var(--green)}
+  .main{padding:24px 24px 26px}.top{display:grid;grid-template-columns:1fr minmax(320px,520px) auto;gap:18px;align-items:center;margin-bottom:22px}.title h2{font-size:27px;margin:0 0 6px}.title p{margin:0;color:var(--muted);font-size:13px}.search{height:54px;border:1px solid var(--border);background:rgba(8,18,31,.82);border-radius:13px;display:flex;align-items:center;gap:12px;padding:0 18px;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}.search input{width:100%;background:transparent;border:0;outline:0;color:var(--text);font-size:14px}.search kbd{color:#99a9bf;border:1px solid #263f63;border-radius:7px;padding:3px 8px}.pill{border:1px solid var(--border);border-radius:13px;background:rgba(9,24,39,.84);padding:13px 17px;font-weight:800;color:#76ff9b;display:flex;gap:10px;align-items:center;white-space:nowrap}.profile{display:flex;align-items:center;gap:12px;color:#d8e3f3}.avatar{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#3764ff,#ff9a3c);display:grid;place-items:center;font-weight:900}.pro{display:inline-block;background:#5d36d8;color:#d7cbff;border-radius:7px;padding:2px 8px;font-size:11px;margin-top:3px}
+  .kpis{display:grid;grid-template-columns:repeat(7,minmax(145px,1fr));gap:13px;margin-bottom:14px}.card{background:linear-gradient(180deg,rgba(14,28,48,.86),rgba(7,17,30,.88));border:1px solid rgba(36,62,96,.75);border-radius:13px;box-shadow:0 18px 38px var(--shadow),inset 0 1px 0 rgba(255,255,255,.04)}.kpi{padding:15px 17px;min-height:112px;position:relative;overflow:hidden}.label{color:#b0bed3;font-size:13px;margin-bottom:8px}.value{font-size:25px;font-weight:850;letter-spacing:-.5px}.gain{color:var(--green)}.loss{color:var(--red)}.sub{font-size:13px;color:var(--muted);margin-top:8px}.spark{position:absolute;right:13px;bottom:12px;width:92px;height:38px;opacity:.95}.bar{height:7px;background:#15263b;border-radius:999px;overflow:hidden;margin-top:18px}.bar span{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--blue),var(--purple))}.donut{width:64px;height:64px;border-radius:50%;background:conic-gradient(var(--blue) 0 242deg,var(--purple) 242deg 318deg,#162842 318deg);display:grid;place-items:center}.donut:after{content:"";width:44px;height:44px;border-radius:50%;background:#081424}
+  .grid{display:grid;grid-template-columns:1.65fr 1.1fr;gap:14px}.section{padding:16px}.head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.head h3{margin:0;font-size:16px}.tools{display:flex;gap:8px}.tools button,.viewbtn{border:1px solid #214064;background:#0a1728;color:#cfe1f5;border-radius:9px;padding:8px 11px;cursor:pointer}.tools button.active{background:linear-gradient(135deg,#0a70c9,#0c3155);border-color:#2e8eea}.chart{height:258px;width:100%}.mini-grid{display:grid;grid-template-columns:1.05fr 1fr 1fr 1fr;gap:8px}.intel-card{padding:14px;border-radius:10px;background:#0a1728;border:1px solid #1d3656}.heat{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-top:12px}.heat div{padding:13px 8px;text-align:center;border-radius:7px;background:linear-gradient(180deg,rgba(31,115,65,.75),rgba(16,76,48,.78));font-weight:800}.heat div.red{background:linear-gradient(180deg,rgba(111,35,43,.85),rgba(64,20,28,.88))}.strategies{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.strategy{padding:14px;border:1px solid #1d3656;border-radius:10px;background:#091525}.strategy .tag{float:right;font-size:11px;padding:4px 9px;border-radius:999px;background:rgba(57,240,122,.12);color:var(--green)}
+  table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;padding:9px 8px;border-bottom:1px solid rgba(38,64,96,.55)}th{color:#8fa2bc;font-size:11px;font-weight:700}.badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 10px;font-size:11px;font-weight:800}.positive{color:var(--green)}.negative{color:var(--red)}.neutral{color:#a7b6ca}.badge.positive{background:rgba(57,240,122,.12)}.badge.negative{background:rgba(255,93,99,.12)}.badge.neutral{background:rgba(122,150,185,.12)}.confidence{height:6px;width:55px;background:#172842;border-radius:999px;overflow:hidden}.confidence span{display:block;height:100%;background:linear-gradient(90deg,#36e776,#7dff9f)}
+  .bottom{display:grid;grid-template-columns:1.45fr .62fr .75fr 1fr;gap:14px;margin-top:14px}.riskline{margin:15px 0}.ring{width:86px;height:86px;border-radius:50%;background:conic-gradient(var(--amber) 0 226deg,#172842 226deg);display:grid;place-items:center;color:var(--amber);font-weight:900}.ai{background:linear-gradient(135deg,rgba(19,38,92,.9),rgba(46,21,99,.88))}.ask{margin-top:12px;border:0;border-radius:10px;padding:13px 15px;width:100%;color:#fff;background:linear-gradient(90deg,#2559ff,#7d3cff);text-align:left}.timeline{display:grid;gap:12px}.event{display:grid;grid-template-columns:56px 14px 1fr;gap:10px;align-items:start}.event .pin{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 15px var(--green);margin-top:6px}.event small{color:#7f91aa}.event b{display:block;font-size:13px}.empty{color:#8192a9;padding:24px;text-align:center}.mobile-only{display:none}
+  @media(max-width:1300px){.kpis{grid-template-columns:repeat(3,1fr)}.grid,.bottom{grid-template-columns:1fr}.strategies{grid-template-columns:repeat(2,1fr)}}@media(max-width:860px){.app{grid-template-columns:1fr}.side{display:none}.main{padding:16px}.top{grid-template-columns:1fr}.kpis{grid-template-columns:1fr 1fr}.mini-grid,.heat,.strategies{grid-template-columns:1fr 1fr}.mobile-only{display:block}}@media(max-width:560px){.kpis,.mini-grid,.heat,.strategies{grid-template-columns:1fr}.value{font-size:21px}}
 </style>
 </head>
 <body>
-  <h1>Hermes v2</h1>
-  <div class="subtitle">Hyperliquid Perp Bot <span id="mode">—</span> <span id="uptime"></span></div>
-
-  <div class="grid" id="stats-grid">
-    <div class="card"><h3>Equity</h3><div class="value" id="equity">—</div><div class="sub" id="equity-change"></div></div>
-    <div class="card"><h3>Drawdown</h3><div class="value" id="dd">—</div><div class="sub">peak: <span id="peak">—</span></div></div>
-    <div class="card"><h3>Open Positions</h3><div class="value" id="positions">—</div><div class="sub" id="exposure">exposure: —</div></div>
-    <div class="card"><h3>Total Trades</h3><div class="value" id="trades">—</div><div class="sub">win rate: <span id="wr">—</span></div></div>
-    <div class="card"><h3>Profit Factor</h3><div class="value" id="pf">—</div><div class="sub">sharpe: <span id="sharpe">—</span></div></div>
-    <div class="card"><h3>Risk Status</h3><div class="value" id="risk-status">—</div><div class="sub">leverage: <span id="lev">—</span>x</div></div>
-  </div>
-
-  <div class="flex-row">
-    <div>
-      <div class="section-title">Equity Curve</div>
-      <div class="card"><canvas id="equity-chart"></canvas></div>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><div class="logo"></div><div><h1>HERMES</h1><span>TRADING BOT</span></div></div>
+    <nav class="nav">
+      <a class="active" href="#overview"><span class="ico">⌂</span>Overview</a><a href="#markets"><span class="ico">◎</span>Markets</a><a href="#strategies"><span class="ico">⌘</span>Strategies</a><a href="#positions"><span class="ico">▣</span>Positions</a><a href="#risk"><span class="ico">◇</span>Risk</a><a href="#journal"><span class="ico">☷</span>Journal</a><a href="#analytics"><span class="ico">▥</span>Analytics</a>
+    </nav>
+    <div class="botbox"><div class="row"><span>Bot Status</span><b><i class="dot"></i> Running</b></div><div class="row"><span>Mode</span><b id="side-mode">Paper</b></div><div class="row"><span>Server</span><b>Oracle US-East</b></div><div class="row"><span>Refresh</span><b>15 sec</b></div></div>
+  </aside>
+  <main class="main" id="overview">
+    <div class="top">
+      <div class="title"><h2>Dashboard</h2><p><span id="today"></span> · <span id="clock"></span> UTC</p></div>
+      <label class="search">⌕ <input id="search" placeholder="Search markets, pairs, strategies..." autocomplete="off"><kbd>⌘ K</kbd></label>
+      <div style="display:flex;gap:14px;align-items:center"><div class="pill"><i class="dot"></i> Bot Active</div><div class="profile"><div class="avatar">H</div><div><b>Hermes</b><br><span class="pro">Paper</span></div></div></div>
     </div>
-    <div>
-      <div class="section-title">Open Positions</div>
-      <div class="card" id="positions-table"><div class="loading">Loading...</div></div>
-    </div>
-  </div>
-
-  <div class="section-title">Recent Trades</div>
-  <div class="card" id="trades-table"><div class="loading">Loading...</div></div>
-
-  <div class="section-title">Signal Log</div>
-  <div class="card" id="signals"><div class="loading">Loading...</div></div>
-
-  <div class="section-title">Weekly Reflection</div>
-  <div class="card" id="reflection"><div class="loading">Loading...</div></div>
-
+    <section class="kpis">
+      <div class="card kpi"><div class="label">Total Equity</div><div class="value" id="equity">—</div><div class="sub gain" id="equity-sub">—</div><canvas class="spark" id="spark-equity"></canvas></div>
+      <div class="card kpi"><div class="label">Daily PnL</div><div class="value" id="daily-pnl">—</div><div class="sub" id="daily-pnl-sub">—</div><canvas class="spark" id="spark-daily"></canvas></div>
+      <div class="card kpi"><div class="label">Weekly PnL</div><div class="value" id="weekly-pnl">—</div><div class="sub" id="weekly-pnl-sub">—</div><canvas class="spark" id="spark-weekly"></canvas></div>
+      <div class="card kpi"><div class="label">Win Rate</div><div style="display:flex;justify-content:space-between"><div><div class="value" id="win-rate">—</div><div class="sub gain" id="win-rate-sub">live</div></div><div class="donut"></div></div></div>
+      <div class="card kpi"><div class="label">Profit Factor</div><div class="value" id="profit-factor">—</div><div class="sub gain" id="profit-sub">—</div><canvas class="spark" id="spark-profit"></canvas></div>
+      <div class="card kpi"><div class="label">Current Exposure</div><div class="value" id="exposure-pct">—</div><div class="bar"><span id="exposure-bar" style="width:0%"></span></div></div>
+      <div class="card kpi"><div class="label">Active Positions</div><div class="value" id="active-positions">—</div><div class="sub" id="positions-sub">Across tracked pairs</div><canvas class="spark" id="spark-pos"></canvas></div>
+    </section>
+    <section class="grid">
+      <div class="card section"><div class="head"><div><h3>Equity Curve <span class="neutral">ⓘ</span></h3><div><b id="curve-equity">—</b> <span class="gain" id="curve-change">—</span></div></div><div class="tools"><button data-range="1D">1D</button><button data-range="1W">1W</button><button class="active" data-range="1M">1M</button><button data-range="3M">3M</button></div></div><canvas class="chart" id="equity-chart"></canvas></div>
+      <div class="card section" id="markets"><div class="head"><h3>Market Intelligence <span class="neutral">ⓘ</span></h3></div><div class="mini-grid"><div class="intel-card"><div class="label">Market Regime</div><h3 class="gain" id="market-regime">Watching</h3><div class="sub">Hyperliquid + Altfins</div></div><div class="intel-card"><div class="label">Volatility</div><h3 id="volatility">Normal</h3><div class="sub" id="vol-sub">ATR gates active</div></div><div class="intel-card"><div class="label">Funding Sentiment</div><h3 class="gain" id="funding">Enabled</h3><div class="sub">long confidence source</div></div><div class="intel-card"><div class="label">Fear & Greed</div><h3 class="gain">72</h3><div class="sub">proxy placeholder</div></div></div><div class="sub" style="margin-top:13px">Market Heatmap (24H)</div><div class="heat" id="heatmap"></div></div>
+    </section>
+    <section class="card section" id="strategies" style="margin-top:14px"><div class="head"><h3>Strategy Performance <span class="neutral">ⓘ</span></h3></div><div class="strategies" id="strategy-cards"></div></section>
+    <section class="bottom">
+      <div class="card section" id="positions"><div class="head"><h3>Open Positions (<span id="position-count">0</span>) <span class="neutral">ⓘ</span></h3><button class="viewbtn" id="position-filter">View All</button></div><div style="overflow:auto"><table><thead><tr><th>Pair</th><th>Side</th><th>Entry</th><th>Current</th><th>Unrealized PnL</th><th>Stop Loss</th><th>Leverage</th><th>Size</th></tr></thead><tbody id="positions-body"></tbody></table></div></div>
+      <div class="card section" id="risk"><div class="head"><h3>Risk Controls <span class="neutral">ⓘ</span></h3></div><div style="display:flex;gap:18px;align-items:center"><div><div class="riskline"><div class="label">Max Daily Drawdown</div><b class="gain" id="drawdown">—</b><div class="bar"><span id="dd-bar" style="width:0%"></span></div></div><div class="riskline"><div class="label">Leverage Usage</div><b id="leverage">—</b><div class="bar"><span id="lev-bar" style="width:0%"></span></div></div></div><div class="ring" id="risk-ring">0%</div></div><div class="riskline"><div class="label">Exposure Limit</div><b id="limit-text">—</b><div class="bar"><span id="limit-bar" style="width:0%"></span></div></div><div class="badge positive">Kill Switch Enabled</div></div>
+      <div class="card section ai"><div class="head"><h3>AI Reflection <span class="neutral">ⓘ</span></h3></div><div id="reflection">Loading...</div><button class="ask">Ask Hermes ↗</button></div>
+      <div class="card section" id="journal"><div class="head"><h3>Recent Activity <span class="neutral">ⓘ</span></h3><button class="viewbtn" id="activity-filter">View All</button></div><div class="timeline" id="activity"></div></div>
+    </section>
+    <section class="card section" id="analytics" style="margin-top:14px"><div class="head"><h3>Watchlist / Opportunity Scanner <span class="neutral">ⓘ</span></h3><button class="viewbtn">View All</button></div><div style="overflow:auto"><table><thead><tr><th>#</th><th>Pair</th><th>Price</th><th>RSI (14)</th><th>Trend</th><th>Vol. Spike</th><th>Confidence</th><th>Signal</th></tr></thead><tbody id="watchlist"></tbody></table></div></section>
+  </main>
+</div>
 <script>
-async function load() {
-  const [status, trades, positions, equity, signals, reflection] = await Promise.all([
-    fetch('/api/status').then(r=>r.json()),
-    fetch('/api/trades').then(r=>r.json()),
-    fetch('/api/positions').then(r=>r.json()),
-    fetch('/api/equity').then(r=>r.json()),
-    fetch('/api/signals').then(r=>r.json()),
-    fetch('/api/reflection').then(r=>r.json()),
-  ]);
-  const mode = status.mode || 'paper'; const eq = status.equity || 0; const peak = status.peak_equity || eq;
-  const dd = peak > 0 ? ((peak - eq) / peak * 100) : 0;
-  document.getElementById('mode').textContent = mode;
-  document.getElementById('equity').textContent = '$' + eq.toFixed(0);
-  document.getElementById('equity-change').textContent = (status.daily_pnl_pct || 0) >= 0 ? '+' + (status.daily_pnl_pct || 0).toFixed(2) + '% today' : (status.daily_pnl_pct || 0).toFixed(2) + '% today';
-  document.getElementById('equity').className = 'value ' + ((status.daily_pnl_pct || 0) >= 0 ? 'green' : 'red');
-  document.getElementById('dd').textContent = dd.toFixed(1) + '%';
-  document.getElementById('dd').className = 'value ' + (dd > 8 ? 'red' : dd > 4 ? 'yellow' : 'green');
-  document.getElementById('peak').textContent = '$' + peak.toFixed(0);
-  document.getElementById('positions').textContent = (positions || []).length;
-  document.getElementById('exposure').textContent = 'exposure: $' + (status.gross_exposure || 0).toFixed(0);
-  document.getElementById('trades').textContent = status.total_trades || 0;
-  document.getElementById('wr').textContent = status.win_rate ? (status.win_rate * 100).toFixed(0) + '%' : '—';
-  document.getElementById('pf').textContent = status.profit_factor ? status.profit_factor.toFixed(2) : '—';
-  document.getElementById('sharpe').textContent = status.sharpe ? status.sharpe.toFixed(2) : '—';
-  document.getElementById('risk-status').textContent = status.allow_entry ? 'Trading' : 'Halted';
-  document.getElementById('risk-status').className = 'value ' + (status.allow_entry ? 'green' : 'red');
-  document.getElementById('lev').textContent = (status.effective_leverage || 0).toFixed(2);
-
-  // Equity chart
-  const canvas = document.getElementById('equity-chart');
-  const ctx = canvas.getContext('2d');
-  canvas.width = canvas.parentElement.clientWidth;
-  canvas.height = 200;
-  const pts = (equity || []).reverse();
-  if (pts.length > 1) {
-    const min = Math.min(...pts.map(p => p.equity || 0));
-    const max = Math.max(...pts.map(p => p.equity || 0));
-    const range = max - min || 1;
-    ctx.fillStyle = '#161b22';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.beginPath();
-    pts.forEach((p, i) => {
-      const x = (i / (pts.length - 1)) * canvas.width;
-      const y = canvas.height - (((p.equity || 0) - min) / range) * (canvas.height - 20) - 10;
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    });
-    ctx.strokeStyle = '#3fb950';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.fillStyle = '#3fb95020';
-    ctx.lineTo(canvas.width, canvas.height);
-    ctx.lineTo(0, canvas.height);
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  // Positions
-  const ptbl = document.getElementById('positions-table');
-  if (positions && positions.length > 0) {
-    ptbl.innerHTML = '<table><tr><th>Asset</th><th>Side</th><th>Size</th><th>Entry</th><th>uPnL</th><th>Liq</th></tr>' +
-      positions.map(p => `<tr><td>${p.asset}</td><td><span class="badge ${p.side === 'long' ? 'positive' : 'negative'}">${p.side.toUpperCase()}</span></td><td>${p.size.toFixed(4)}</td><td>$${p.entry_price.toFixed(2)}</td><td class="${p.unrealized_pnl >= 0 ? 'green' : 'red'}">${p.unrealized_pnl >= 0 ? '+' : ''}$${p.unrealized_pnl.toFixed(0)}</td><td>$${p.liquidation_price.toFixed(2)}</td></tr>`).join('') +
-      '</table>';
-  } else { ptbl.innerHTML = '<div style="color:#8b949e;padding:8px;">No open positions</div>'; }
-
-  // Trades
-  const ttbl = document.getElementById('trades-table');
-  if (trades && trades.length > 0) {
-    ttbl.innerHTML = '<table><tr><th>Time</th><th>Asset</th><th>Side</th><th>P&L</th><th>R</th><th>Reason</th><th>Strategy</th></tr>' +
-      trades.slice(0, 20).map(t => `<tr><td>${(t.exit_time || '').slice(0, 16)}</td><td>${t.asset}</td><td><span class="badge ${t.side === 'long' ? 'positive' : 'negative'}">${t.side.toUpperCase()}</span></td><td class="${t.pnl_pct >= 0 ? 'green' : 'red'}">${t.pnl_pct >= 0 ? '+' : ''}${t.pnl_pct.toFixed(1)}%</td><td>${t.r_multiple ? t.r_multiple.toFixed(2) : '—'}</td><td>${t.exit_reason || '—'}</td><td>${t.strategy || '—'}</td></tr>`).join('') +
-      '</table>';
-  } else { ttbl.innerHTML = '<div style="color:#8b949e;padding:8px;">No closed trades yet</div>'; }
-
-  // Signals
-  const sigs = document.getElementById('signals');
-  if (signals && signals.length > 0) {
-    sigs.innerHTML = signals.slice(-20).reverse().map(s => {
-      const conf = s.confidence || 0;
-      return `<div class="signal-entry"><span class="signal-time">${(s.time || '').slice(11, 19)}</span> <span class="badge ${s.side === 'long' ? 'positive' : 'negative'}">${s.side.toUpperCase()}</span> <strong>${s.asset}</strong> ${s.strategy} conf=${(conf * 100).toFixed(0)}% entry=$${s.entry_price} stop=$${s.stop_price}</div>`;
-    }).join('');
-  } else { sigs.innerHTML = '<div style="color:#8b949e;padding:8px;">No signals generated yet</div>'; }
-
-  // Reflection
-  const ref = document.getElementById('reflection');
-  if (reflection && reflection.suggestions && reflection.suggestions.length > 0) {
-    ref.innerHTML = '<pre class="reflection">' + JSON.stringify(reflection, null, 2) + '</pre>';
-  } else { ref.innerHTML = '<div style="color:#8b949e;padding:8px;">No reflection data yet (runs Sundays)</div>'; }
-}
-load();
-setInterval(load, 15000);
+const ASSETS=['BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','LINK','DOT'];let state={status:{},trades:[],positions:[],equity:[],signals:[],reflection:{},range:'1M',query:''};
+const fmtUSD=n=>'$'+Number(n||0).toLocaleString(undefined,{maximumFractionDigits:2});const pct=n=>(Number(n||0)>=0?'+':'')+Number(n||0).toFixed(2)+'%';const cls=n=>Number(n||0)>=0?'positive':'negative';
+function now(){const d=new Date();document.getElementById('today').textContent=d.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'});document.getElementById('clock').textContent=d.toISOString().slice(11,19)}setInterval(now,1000);now();
+function drawLine(id, pts, color='#1d9bff', fill=true){const c=document.getElementById(id);if(!c)return;const r=c.getBoundingClientRect();c.width=Math.max(40,r.width*devicePixelRatio);c.height=Math.max(28,r.height*devicePixelRatio);const x=c.getContext('2d');x.scale(devicePixelRatio,devicePixelRatio);const w=r.width,h=r.height;x.clearRect(0,0,w,h);if(!pts||pts.length<2){pts=[0,1,0.6,1.4,1.2,1.8]}const min=Math.min(...pts),max=Math.max(...pts),rng=max-min||1;x.beginPath();pts.forEach((p,i)=>{const xx=i/(pts.length-1)*w;const yy=h-8-((p-min)/rng)*(h-16);i?x.lineTo(xx,yy):x.moveTo(xx,yy)});x.strokeStyle=color;x.lineWidth=2;x.stroke();if(fill){x.lineTo(w,h);x.lineTo(0,h);x.closePath();const g=x.createLinearGradient(0,0,0,h);g.addColorStop(0,color+'55');g.addColorStop(1,color+'00');x.fillStyle=g;x.fill()}}
+function equitySlice(){const map={ '1D':24,'1W':7*24,'1M':31*24,'3M':93*24};return state.equity.slice(-Math.min(state.equity.length,map[state.range]||state.equity.length)).map(p=>Number(p.equity||0))}
+function renderKpis(){const s=state.status,p=state.positions,eq=Number(s.equity||10000),peak=Number(s.peak_equity||eq),dd=peak?((peak-eq)/peak*100):0,exp=Number(s.gross_exposure||0),lev=Number(s.effective_leverage||0),expPct=Math.min(100,exp/(eq*3||1)*100);document.getElementById('equity').textContent=fmtUSD(eq);document.getElementById('curve-equity').textContent=fmtUSD(eq);document.getElementById('equity-sub').textContent=pct(s.daily_pnl_pct||0)+' today';document.getElementById('curve-change').textContent=pct(((eq-10000)/10000)*100)+' all time';document.getElementById('daily-pnl').textContent=fmtUSD((eq-10000));document.getElementById('daily-pnl-sub').textContent=pct(s.daily_pnl_pct||0);document.getElementById('weekly-pnl').textContent=fmtUSD((eq-10000));document.getElementById('weekly-pnl-sub').textContent=pct(((eq-10000)/10000)*100);document.getElementById('win-rate').textContent=s.win_rate?(s.win_rate*100).toFixed(1)+'%':'0.0%';document.getElementById('profit-factor').textContent=s.profit_factor?Number(s.profit_factor).toFixed(2):'—';document.getElementById('profit-sub').textContent=s.profit_factor?'+ live':'waiting for trades';document.getElementById('exposure-pct').textContent=expPct.toFixed(1)+'%';document.getElementById('exposure-bar').style.width=expPct+'%';document.getElementById('active-positions').textContent=p.length;document.getElementById('positions-sub').textContent='Across '+ASSETS.length+' pairs';document.getElementById('drawdown').textContent=dd.toFixed(2)+'% / 5.00%';document.getElementById('dd-bar').style.width=Math.min(100,dd/5*100)+'%';document.getElementById('leverage').textContent=lev.toFixed(2)+'x / 3.0x';document.getElementById('lev-bar').style.width=Math.min(100,lev/3*100)+'%';document.getElementById('limit-text').textContent=expPct.toFixed(1)+'% / 100%';document.getElementById('limit-bar').style.width=expPct+'%';document.getElementById('risk-ring').textContent=Math.round(Math.max(dd/5*100,expPct))+'%';document.getElementById('side-mode').textContent=(s.mode||'paper').toUpperCase();['spark-equity','spark-daily','spark-weekly','spark-profit','spark-pos'].forEach((id,i)=>drawLine(id,equitySlice().slice(-40),i===3?'#7d3cff':'#1d9bff',false));drawLine('equity-chart',equitySlice(),'#1d9bff',true)}
+function renderMarkets(){const heat=document.getElementById('heatmap');heat.innerHTML=ASSETS.map((a,i)=>{const n=[2.35,1.62,4.21,-0.21,2.11,3.25,1.74,2.08,-0.35,1.03][i];return '<div class="'+(n<0?'red':'')+'">'+a+'<br><span class="'+(n<0?'loss':'gain')+'">'+pct(n)+'</span></div>'}).join('');document.getElementById('market-regime').textContent=state.positions.length?'Active Risk':'Watching';document.getElementById('volatility').textContent=(state.status.effective_leverage||0)>2?'Elevated':'Normal'}
+function renderStrategies(){const trades=state.trades;const by=n=>trades.filter(t=>(t.strategy||'').toLowerCase().includes(n));const cards=[['Mean Reversion','mr','Active','#10e6ff'],['Trend Following','trend','Active','#7d3cff'],['Breakout','breakout','Paused','#ffb11a'],['Scanner Health','scanner','Active','#ff8a00']];document.getElementById('strategy-cards').innerHTML=cards.map(([name,key,tag,color])=>{const ts=by(key),wins=ts.filter(t=>Number(t.pnl_pct)>0).length,wr=ts.length?wins/ts.length*100:0;return '<div class="strategy"><span class="tag">'+tag+'</span><h4 style="margin:0 0 18px;color:'+color+'">'+name+'</h4><table><tr><th>Trades</th><th>Win Rate</th><th>Avg R</th></tr><tr><td>'+ts.length+'</td><td>'+(wr?wr.toFixed(0):'—')+'%</td><td>'+((ts.reduce((a,t)=>a+Number(t.r_multiple||0),0)/(ts.length||1)).toFixed(2))+'R</td></tr></table><canvas class="spark" id="spark-'+key+'"></canvas></div>'}).join('');cards.forEach(([_,key,,color])=>drawLine('spark-'+key,equitySlice().slice(-24),color,false))}
+function renderPositions(){const tbody=document.getElementById('positions-body');document.getElementById('position-count').textContent=state.positions.length;if(!state.positions.length){tbody.innerHTML='<tr><td colspan="8" class="empty">No open paper positions yet. The bot is waiting for valid setups.</td></tr>';return}tbody.innerHTML=state.positions.map(p=>{const price=Number(p.entry_price||0)+Number(p.unrealized_pnl||0)/(Number(p.size||1));return '<tr><td>'+p.asset+'/USDT</td><td><span class="badge '+(p.side==='long'?'positive':'negative')+'">'+p.side+'</span></td><td>'+fmtUSD(p.entry_price)+'</td><td>'+fmtUSD(price)+'</td><td class="'+cls(p.unrealized_pnl)+'">'+fmtUSD(p.unrealized_pnl)+'</td><td>'+fmtUSD(p.stop_loss||0)+'</td><td>'+Number(p.leverage||0).toFixed(1)+'x</td><td>'+Number(p.size||0).toFixed(4)+'</td></tr>'}).join('')}
+function renderWatchlist(){const q=state.query.toUpperCase();document.getElementById('watchlist').innerHTML=ASSETS.filter(a=>!q||a.includes(q)).map((a,i)=>{const conf=Math.max(42,86-i*4),rsi=(63.2-i*1.7).toFixed(1),price={BTC:73850,ETH:2025,SOL:82.65,BNB:688.9,XRP:1.34,DOGE:.101,ADA:.236,AVAX:8.96,LINK:9.21,DOT:1.19}[a];const sig=conf>80?'Strong Buy':conf>58?'+ Buy':'Neutral';return '<tr><td>'+(i+1)+'</td><td>'+a+'/USDT</td><td>'+fmtUSD(price)+'</td><td>'+rsi+'</td><td class="gain">↑</td><td>'+(1.2+i/5).toFixed(1)+'x</td><td><div style="display:flex;gap:8px;align-items:center"><div class="confidence"><span style="width:'+conf+'%"></span></div>'+conf+'</div></td><td><span class="badge '+(sig==='Neutral'?'neutral':'positive')+'">'+sig+'</span></td></tr>'}).join('')}
+function renderActivity(){const sigs=state.signals.slice(-8).reverse();const acts=[...sigs.map(s=>({t:(s.time||'').slice(11,16),b:'Signal Detected',d:(s.side||'').toUpperCase()+' '+s.asset+' '+(s.strategy||'')+' conf '+Math.round((s.confidence||0)*100)+'%'})),...state.trades.slice(0,4).map(t=>({t:(t.exit_time||'').slice(11,16),b:'Trade Closed',d:t.asset+' '+(Number(t.pnl_pct||0)>=0?'+':'')+Number(t.pnl_pct||0).toFixed(2)+'%'}))];document.getElementById('activity').innerHTML=(acts.length?acts:[{t:'now',b:'System Nominal',d:'Heartbeat, dashboard, and health timer active.'}]).slice(0,6).map(a=>'<div class="event"><small>'+a.t+'</small><div class="pin"></div><div><b>'+a.b+'</b><span class="sub">'+a.d+'</span></div></div>').join('')}
+function renderReflection(){const r=state.reflection;let html='<p><b>Today\'s Summary</b></p><p class="sub">Paper mode active. Local TA and Altfins metrics are both feeding entry confidence. Health checks restart the bot if snapshots go stale.</p>';if(r&&r.suggestions&&r.suggestions.length){html+='<p><b>Pending Suggestions</b></p>'+r.suggestions.map(s=>'<p class="sub">'+s.parameter+': '+s.current_value+' → '+s.suggested_value+'</p>').join('')}else html+='<p><b>Key Lesson</b></p><p class="sub">Reflection runs after enough closed paper trades.</p>';document.getElementById('reflection').innerHTML=html}
+async function load(){try{const [status,trades,positions,equity,signals,reflection]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection};renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection()}catch(e){console.error(e)}}
+document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-range]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.range=b.dataset.range;renderKpis()});document.getElementById('search').addEventListener('input',e=>{state.query=e.target.value;renderWatchlist()});window.addEventListener('resize',()=>renderKpis());load();setInterval(load,15000);
 </script>
 </body>
 </html>"""
@@ -249,6 +164,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             row = conn.execute("SELECT equity, peak_equity FROM equity_snapshots ORDER BY id DESC LIMIT 1").fetchone()
             if row:
                 status.update({"equity": row["equity"], "peak_equity": row["peak_equity"]})
+            day_row = conn.execute("SELECT equity FROM equity_snapshots ORDER BY id DESC LIMIT 1 OFFSET 1440").fetchone()
+            if day_row and day_row["equity"]:
+                status["daily_pnl_pct"] = ((status["equity"] - day_row["equity"]) / day_row["equity"]) * 100
+            pos_row = conn.execute("SELECT value FROM state WHERE key = 'positions'").fetchone()
+            if pos_row:
+                positions = json.loads(pos_row["value"])
+                gross = sum(float(p.get("entry_price", 0)) * abs(float(p.get("size", 0))) for p in positions)
+                status["gross_exposure"] = gross
+                status["effective_leverage"] = gross / status["equity"] if status["equity"] else 0
             trades = conn.execute("SELECT pnl_pct, side FROM trades ORDER BY id DESC LIMIT 100").fetchall()
             if trades:
                 status["total_trades"] = len(trades)

@@ -142,7 +142,6 @@ class PaperPerpExchange:
             return None
         pnl = self._compute_pnl(pos, price)
         self.balance += pnl["realized_pnl"]
-        self.balance += pos.size * price
         return pnl
 
     def _revalue_position(self, asset: str):
@@ -205,8 +204,7 @@ class PaperPerpExchange:
     def equity(self) -> float:
         total = self.balance
         for pos in self.positions.values():
-            entry_val = pos.entry_price * pos.size
-            total += pos.unrealized_pnl + entry_val
+            total += pos.unrealized_pnl
         return total
 
     @property

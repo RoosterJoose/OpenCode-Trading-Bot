@@ -215,6 +215,25 @@ class TradingLoop:
         ge = exchange.gross_exposure
         self.risk.update_equity(eq, ge)
         self.store.save_equity_snapshot(eq, self.risk.peak_equity)
+        self.store.put_state("positions", [
+            {
+                "asset": p.asset,
+                "side": p.side.value,
+                "entry_price": p.entry_price,
+                "size": p.size,
+                "leverage": p.leverage,
+                "liquidation_price": p.liquidation_price,
+                "unrealized_pnl": p.unrealized_pnl,
+                "realized_pnl": p.realized_pnl,
+                "entry_time": p.entry_time.isoformat(),
+                "stop_loss": p.stop_loss,
+                "take_profit": p.take_profit,
+                "strategy": p.strategy,
+                "signal_source": p.signal_source,
+                "entry_confidence": p.entry_confidence,
+            }
+            for p in exchange.positions.values()
+        ])
 
     async def _process_asset(
         self,
