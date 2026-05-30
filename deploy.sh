@@ -50,8 +50,7 @@ WorkingDirectory=/opt/hermes-trading-bot
 ExecStart=/opt/hermes-trading-bot/.venv/bin/python -m src.main
 Restart=on-failure
 RestartSec=10
-StandardOutput=append:/opt/hermes-trading-bot/data/output.log
-StandardError=append:/opt/hermes-trading-bot/data/error.log
+# Logs go to journald by default. View with: journalctl -u hermes-bot -f
 
 # Environment (set your Hyperliquid keys when ready):
 # Environment=HERMES_HYPERLIQUID__WALLET=0x...
