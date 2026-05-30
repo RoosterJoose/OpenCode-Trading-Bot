@@ -150,6 +150,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             "/api/signals": self._api_signals,
             "/api/reflection": self._api_reflection,
             "/api/readiness": self._api_readiness,
+            "/api/intents": self._api_intents,
         }
         handler = handlers.get(api)
         if handler:
@@ -333,6 +334,25 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             })
         except Exception:
             self._send_json({"ready": False, "error": "readiness_unavailable"})
+        finally:
+            conn.close()
+
+    def _api_intents(self):
+        conn = self._connect()
+        try:
+            rows = conn.execute("SELECT * FROM trade_intents ORDER BY id DESC LIMIT 100").fetchall()
+            intents = []
+            for row in rows:
+                item = dict(row)
+                try:
+                    item["components"] = json.loads(item.get("components") or "[]")
+                    item["payload"] = json.loads(item.get("payload") or "{}")
+                except Exception:
+                    pass
+                intents.append(item)
+            self._send_json(intents)
+        except Exception:
+            self._send_json([])
         finally:
             conn.close()
 

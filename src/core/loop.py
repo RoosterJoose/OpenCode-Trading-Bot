@@ -27,6 +27,7 @@ from typing import Optional
 from src.adapters.altfins import AltfinsAdapter
 from src.adapters.hyperliquid import HyperliquidAdapter
 from src.adapters.paper_perp import PaperPerpExchange
+from src.core.intents import TradeIntent
 from src.core.perp_risk import PerpRiskManager
 from src.core.reflect import SignalTracker, WeeklyReflector
 from src.core.types import (
@@ -204,6 +205,9 @@ class TradingLoop:
         except Exception as e:
             logger.debug("fetch meta: %s", e)
 
+        # 4b. Process external intents after all risk inputs are fresh.
+        await self._process_external_intents(exchange, hl)
+
         # 5. Process each asset
         for asset in self.assets:
             candles = self.candle_cache.get(asset, [])
@@ -379,6 +383,99 @@ class TradingLoop:
             if self._suggested_params:
                 self.store.put_state("pending_param_changes", self._suggested_params)
                 logger.info("PENDING PARAM CHANGES: %d suggestions", len(self._suggested_params))
+
+    async def _process_external_intents(self, exchange: PaperPerpExchange, hl: HyperliquidAdapter):
+        for row in self.store.pending_intents(limit=25):
+            try:
+                intent = TradeIntent.from_row(row)
+                ok, reason = await self._execute_intent(intent, exchange, hl)
+                self.store.update_intent_status(intent.id, "accepted" if ok else "rejected", reason)
+            except Exception as e:
+                self.store.update_intent_status(int(row["id"]), "rejected", f"invalid_intent: {e}")
+
+    async def _execute_intent(self, intent: TradeIntent, exchange: PaperPerpExchange, hl: HyperliquidAdapter) -> tuple[bool, str]:
+        now = datetime.now(timezone.utc)
+        if now >= intent.expires_at:
+            return False, "expired"
+        if intent.asset not in self.assets:
+            return False, "asset_not_allowed"
+        if intent.confidence < MIN_ENTRY_CONFIDENCE:
+            return False, f"confidence_below_gate: {intent.confidence:.2f}"
+
+        existing = await exchange.fetch_position(intent.asset)
+        if existing:
+            return False, "position_already_open"
+
+        price = await exchange.fetch_price(intent.asset)
+        entry_price = price if price > 0 else intent.intended_entry_price
+        if entry_price <= 0:
+            return False, "no_price"
+
+        risk_ok, risk_msg = self.risk.allow_entry(exchange.gross_exposure, exchange.effective_leverage)
+        if not risk_ok:
+            return False, risk_msg
+        oi_ok, oi_msg = self.risk.oi_gate_allows(intent.asset)
+        if not oi_ok:
+            return False, oi_msg
+        funding_rate = hl._latest_funding.get(intent.asset, 0.0)
+        funding_ok, funding_msg = self.risk.funding_gate(funding_rate)
+        if not funding_ok:
+            return False, funding_msg
+
+        stop_price = intent.requested_stop_price
+        if stop_price is None or stop_price <= 0:
+            candles = self.candle_cache.get(intent.asset, [])
+            stop_pct, _ = self.risk.compute_stop_distance(intent.asset, candles)
+            stop_price = entry_price * (1 - stop_pct / 100) if intent.side == Side.LONG else entry_price * (1 + stop_pct / 100)
+
+        stop_pct = abs(entry_price - stop_price) / entry_price * 100
+        if stop_pct < self.risk.stop_min_pct or stop_pct > self.risk.stop_max_pct:
+            return False, f"stop_distance_out_of_bounds: {stop_pct:.2f}%"
+        if intent.side == Side.LONG and stop_price >= entry_price:
+            return False, "invalid_long_stop"
+        if intent.side == Side.SHORT and stop_price <= entry_price:
+            return False, "invalid_short_stop"
+
+        candles = self.candle_cache.get(intent.asset, [])
+        safe_lev, lev_reason = self.risk.compute_leverage(intent.asset, candles, intent.side)
+        leverage = max(1.0, min(intent.requested_leverage, safe_lev, self.risk.max_portfolio_leverage))
+        qty, risk_dollars, _ = self.risk.position_size(
+            intent.asset, exchange.equity, stop_pct, entry_price, exchange.gross_exposure
+        )
+        if qty <= 0:
+            return False, "no_remaining_exposure_capacity"
+        projected_exposure = exchange.gross_exposure + (qty * entry_price)
+        projected_lev = projected_exposure / exchange.equity if exchange.equity > 0 else 999
+        if projected_lev > self.risk.max_portfolio_leverage:
+            return False, f"projected_leverage: {projected_lev:.2f}x"
+
+        order_id = await exchange.place_order(Order(
+            asset=intent.asset,
+            side=intent.side,
+            order_type=OrderType.MARKET,
+            quantity=qty,
+            stop_price=stop_price,
+            reduce_only=False,
+            leverage=leverage,
+            metadata={"component_sources": intent.components, "intent_key": intent.idempotency_key},
+        ))
+        if not order_id:
+            return False, "order_rejected"
+
+        pos = exchange.positions.get(intent.asset)
+        if pos:
+            pos.strategy = intent.strategy or "freqtrade_intent"
+            pos.signal_source = f"intent:{intent.source}:{intent.asset}"
+            pos.entry_confidence = intent.confidence
+            pos.stop_loss = stop_price
+            pos.component_sources = list(intent.components)
+        self.risk.record_position_open(intent.asset)
+        logger.info(
+            "INTENT ACCEPTED %s %s qty=%.4f @ %.2f stop=%.2f lev=%.1fx risk=$%.0f conf=%.2f %s",
+            intent.side.value.upper(), intent.asset, qty, entry_price, stop_price, leverage,
+            risk_dollars, intent.confidence, lev_reason,
+        )
+        return True, "accepted"
 
     def _infer_regime(self, candles: list[PerpCandle]) -> RegimeType:
         if len(candles) < 100:

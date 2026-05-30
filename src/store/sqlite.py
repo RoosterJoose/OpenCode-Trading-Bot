@@ -58,6 +58,26 @@ class Store:
                     value TEXT,
                     updated_at TEXT DEFAULT (datetime('now'))
                 );
+
+                CREATE TABLE IF NOT EXISTS trade_intents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    source TEXT NOT NULL DEFAULT 'unknown',
+                    strategy TEXT NOT NULL DEFAULT '',
+                    asset TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    confidence REAL NOT NULL DEFAULT 0,
+                    intended_entry_price REAL NOT NULL DEFAULT 0,
+                    requested_stop_price REAL,
+                    requested_leverage REAL NOT NULL DEFAULT 1,
+                    components TEXT NOT NULL DEFAULT '[]',
+                    payload TEXT NOT NULL DEFAULT '{}',
+                    reject_reason TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    processed_at TEXT
+                );
             """)
             self._conn.commit()
 
@@ -106,6 +126,65 @@ class Store:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM equity_snapshots ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def save_intent(self, intent: dict) -> bool:
+        with self._lock:
+            try:
+                self._conn.execute(
+                    """
+                    INSERT INTO trade_intents (
+                        idempotency_key, status, source, strategy, asset, side, confidence,
+                        intended_entry_price, requested_stop_price, requested_leverage,
+                        components, payload, created_at, expires_at
+                    ) VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        intent["idempotency_key"],
+                        intent.get("source", "unknown"),
+                        intent.get("strategy", ""),
+                        intent["asset"],
+                        intent["side"],
+                        float(intent.get("confidence", 0)),
+                        float(intent.get("intended_entry_price", 0)),
+                        intent.get("requested_stop_price"),
+                        float(intent.get("requested_leverage", 1)),
+                        json.dumps(intent.get("components", []), default=str),
+                        json.dumps(intent, default=str),
+                        intent["created_at"],
+                        intent["expires_at"],
+                    ),
+                )
+                self._conn.commit()
+                return True
+            except sqlite3.IntegrityError:
+                return False
+
+    def pending_intents(self, limit: int = 50) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM trade_intents WHERE status = 'pending' ORDER BY id ASC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def update_intent_status(self, intent_id: int, status: str, reason: str = ""):
+        with self._lock:
+            self._conn.execute(
+                """
+                UPDATE trade_intents
+                SET status = ?, reject_reason = ?, processed_at = datetime('now')
+                WHERE id = ?
+                """,
+                (status, reason, intent_id),
+            )
+            self._conn.commit()
+
+    def intents(self, limit: int = 100) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM trade_intents ORDER BY id DESC LIMIT ?", (limit,)
             ).fetchall()
             return [dict(r) for r in rows]
 
