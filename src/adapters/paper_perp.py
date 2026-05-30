@@ -110,7 +110,7 @@ class PaperPerpExchange:
             existing.liquidation_price = self._compute_liq_price(existing.asset, existing.side, avg_price, total_size, existing.leverage)
             existing.fills.append(Fill(cloid, order.asset, order.side, order.quantity, fill_price, fee))
         else:
-            lev = min(max_lev, 3.0)
+            lev = min(max_lev, max(1.0, order.leverage or 1.0))
             liq = self._compute_liq_price(order.asset, order.side, fill_price, order.quantity, lev)
             pos = PerpPosition(
                 asset=order.asset,
@@ -120,7 +120,8 @@ class PaperPerpExchange:
                 leverage=lev,
                 liquidation_price=liq,
                 entry_time=datetime.now(timezone.utc),
-                stop_loss=order.stop_price if order.order_type in (OrderType.STOP, OrderType.STOP_LIMIT) else None,
+                stop_loss=order.stop_price,
+                component_sources=list(order.metadata.get("component_sources", [])),
             )
             self.positions[order.asset] = pos
 
@@ -143,6 +144,32 @@ class PaperPerpExchange:
         pnl = self._compute_pnl(pos, price)
         self.balance += pnl["realized"]
         return pnl
+
+    def restore_positions(self, positions: list[dict]):
+        for raw in positions:
+            try:
+                entry_time = datetime.fromisoformat(raw["entry_time"]) if raw.get("entry_time") else datetime.now(timezone.utc)
+                pos = PerpPosition(
+                    asset=raw["asset"],
+                    side=Side(raw.get("side", "long")),
+                    entry_price=float(raw.get("entry_price", 0)),
+                    size=float(raw.get("size", 0)),
+                    leverage=float(raw.get("leverage", 1)),
+                    liquidation_price=float(raw.get("liquidation_price", 0)),
+                    unrealized_pnl=float(raw.get("unrealized_pnl", 0)),
+                    realized_pnl=float(raw.get("realized_pnl", 0)),
+                    entry_time=entry_time,
+                    stop_loss=raw.get("stop_loss"),
+                    take_profit=raw.get("take_profit"),
+                    strategy=raw.get("strategy", ""),
+                    signal_source=raw.get("signal_source", ""),
+                    entry_confidence=float(raw.get("entry_confidence", 0)),
+                    component_sources=list(raw.get("component_sources", [])),
+                )
+                if pos.asset and pos.entry_price > 0 and pos.size > 0:
+                    self.positions[pos.asset] = pos
+            except (KeyError, TypeError, ValueError) as e:
+                logger.warning("Skipping invalid restored position: %s", e)
 
     def _revalue_position(self, asset: str):
         pos = self.positions.get(asset)

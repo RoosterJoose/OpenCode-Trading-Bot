@@ -99,6 +99,29 @@ Persistent=true
 WantedBy=timers.target
 UTIMER
 
+echo "==> 6b. Creating audit timer (checks trading invariants every 15 min)..."
+sudo tee /etc/systemd/system/hermes-audit.service > /dev/null <<'AUDITSVC'
+[Unit]
+Description=Hermes invariant/API/dashboard audit
+[Service]
+Type=oneshot
+User=hermes
+Group=hermes
+WorkingDirectory=/opt/hermes-trading-bot
+ExecStart=/opt/hermes-trading-bot/.venv/bin/python scripts/audit.py --db /opt/hermes-trading-bot/data/hermes.db --dashboard http://127.0.0.1:8081
+AUDITSVC
+
+sudo tee /etc/systemd/system/hermes-audit.timer > /dev/null <<'AUDITTIMER'
+[Unit]
+Description=Run Hermes audit every 15 minutes
+[Timer]
+OnBootSec=120
+OnUnitActiveSec=900
+Persistent=true
+[Install]
+WantedBy=timers.target
+AUDITTIMER
+
 echo "==> 7. Creating data directory..."
 sudo -u "$HERMES_USER" mkdir -p "$INSTALL_DIR/data"
 
@@ -106,8 +129,10 @@ echo "==> 8. Enabling and starting services..."
 sudo systemctl daemon-reload
 sudo systemctl enable hermes-bot
 sudo systemctl enable hermes-auto-update.timer
+sudo systemctl enable hermes-audit.timer
 sudo systemctl start hermes-bot
 sudo systemctl start hermes-auto-update.timer
+sudo systemctl start hermes-audit.timer
 
 echo ""
 echo "=============================================="

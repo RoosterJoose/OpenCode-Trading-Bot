@@ -183,7 +183,8 @@ class PerpRiskManager:
     # ── Position sizing: risk-per-trade / stop_distance ────────────────
 
     def position_size(
-        self, asset: str, equity: float, stop_distance_pct: float, price: float
+        self, asset: str, equity: float, stop_distance_pct: float, price: float,
+        current_gross_exposure: float = 0.0
     ) -> tuple[float, float, float]:
         risk_dollars = equity * (self.risk_per_trade_pct / 100)
         max_notional = risk_dollars / (stop_distance_pct / 100)
@@ -201,9 +202,9 @@ class PerpRiskManager:
             phi = max(0.5, min(1.5, 1.0 + (wins - (len(recent) - wins)) / 10.0))
             quantity *= phi
 
-        port_notional = self.gross_exposure()
+        port_notional = max(current_gross_exposure, self.gross_exposure())
         remaining_capacity = (self.max_portfolio_leverage * equity) - port_notional
-        max_qty = remaining_capacity / price if price > 0 and remaining_capacity > 0 else quantity
+        max_qty = remaining_capacity / price if price > 0 and remaining_capacity > 0 else 0.0
         quantity = min(quantity, max_qty)
 
         return quantity, risk_dollars, max_notional

@@ -149,6 +149,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             "/api/markets": self._api_markets,
             "/api/signals": self._api_signals,
             "/api/reflection": self._api_reflection,
+            "/api/readiness": self._api_readiness,
         }
         handler = handlers.get(api)
         if handler:
@@ -284,6 +285,54 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._send_json({})
         except Exception:
             self._send_json({})
+        finally:
+            conn.close()
+
+    def _api_readiness(self):
+        conn = self._connect()
+        try:
+            trades = conn.execute("SELECT pnl_pct, strategy FROM trades ORDER BY id DESC LIMIT 500").fetchall()
+            pnls = [float(t["pnl_pct"] or 0.0) for t in trades]
+            mr = [float(t["pnl_pct"] or 0.0) for t in trades if (t["strategy"] or "") == "mr"]
+            trend = [float(t["pnl_pct"] or 0.0) for t in trades if (t["strategy"] or "") == "trend"]
+            eq = conn.execute("SELECT equity, peak_equity FROM equity_snapshots ORDER BY id DESC LIMIT 1").fetchone()
+            equity = float(eq["equity"]) if eq else 10000.0
+            peak = float(eq["peak_equity"]) if eq else equity
+            dd = ((peak - equity) / peak * 100) if peak > 0 else 0.0
+
+            def win_rate(vals):
+                return sum(1 for v in vals if v > 0) / len(vals) if vals else 0.0
+
+            def profit_factor(vals):
+                wins = sum(v for v in vals if v > 0)
+                losses = abs(sum(v for v in vals if v < 0))
+                return wins / losses if losses > 0 else (999.0 if wins > 0 else 0.0)
+
+            checks = {
+                "min_trades_50": len(pnls) >= 50,
+                "mr_pf_gt_1_5": profit_factor(mr) > 1.5 if mr else False,
+                "trend_pf_gt_1_2": profit_factor(trend) > 1.2 if trend else False,
+                "drawdown_lt_15": dd < 15.0,
+                "mr_wr_gt_0_55": win_rate(mr) > 0.55 if mr else False,
+                "trend_wr_gt_0_40": win_rate(trend) > 0.40 if trend else False,
+            }
+            passed = sum(1 for v in checks.values() if v)
+            self._send_json({
+                "ready": passed >= 5,
+                "checks_passed": passed,
+                "checks_total": len(checks),
+                "details": checks,
+                "stats": {
+                    "total_trades": len(pnls),
+                    "drawdown_pct": round(dd, 2),
+                    "mr_profit_factor": round(profit_factor(mr), 2) if mr else None,
+                    "trend_profit_factor": round(profit_factor(trend), 2) if trend else None,
+                    "mr_win_rate": round(win_rate(mr), 3) if mr else None,
+                    "trend_win_rate": round(win_rate(trend), 3) if trend else None,
+                },
+            })
+        except Exception:
+            self._send_json({"ready": False, "error": "readiness_unavailable"})
         finally:
             conn.close()
 

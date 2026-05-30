@@ -98,16 +98,20 @@ class MeanReversion(PerpStrategy):
             confidence += 0.2
             sources.append("deep_oversold")
 
+        component_sources = ["local:rsi_oversold"]
+
         # Altfins signal validation — external signals validate direction, not additive boost
         altfins_confirm = False
         for s in signals:
             if s.asset != asset or s.direction != Side.LONG:
                 continue
             if s.source.startswith("altfins:"):
-                if "oversold" in s.source or "pullback" in s.source or "bollinger_touch_lower" in s.source:
+                source_l = s.source.lower()
+                if "oversold" in source_l or "pullback" in source_l or "bollinger_touch_lower" in source_l:
                     sig_weight = self.signal_tracker.weight(s.source) if self.signal_tracker else 0.5
                     if sig_weight > 0:
                         altfins_confirm = True
+                        component_sources.append(s.source)
                         sources.append(s.source.replace("altfins:", "") + f"_{sig_weight:.2f}")
         if altfins_confirm:
             confidence = min(confidence * 1.2, 0.95)
@@ -133,6 +137,7 @@ class MeanReversion(PerpStrategy):
             "rsi": round(rsi, 2) if rsi is not None else None,
             "atr_pct": round(stop_pct * 100, 2),
             "sources": sources,
+            "component_sources": component_sources,
             "tp1": entry_price + (risk_r * self.tp1_r_mult * entry_price),
             "tp2": entry_price + (risk_r * self.tp2_r_mult * entry_price),
             "tp3": entry_price + (risk_r * self.tp3_r_mult * entry_price),
@@ -146,7 +151,7 @@ class MeanReversion(PerpStrategy):
         candles: list[PerpCandle],
         funding_rate: float,
     ) -> Optional[tuple[str, Optional[float]]]:
-        if current_price <= (position.stop_loss or 0) * 1.05:
+        if position.stop_loss and current_price <= position.stop_loss:
             return "stop_loss", current_price
 
         entry = position.entry_price

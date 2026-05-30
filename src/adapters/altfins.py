@@ -11,7 +11,7 @@ NotebookLM-verified Tier 1 signal selection.
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
 import httpx
@@ -182,7 +182,7 @@ class AltfinsAdapter:
             return []
 
         now = datetime.now(timezone.utc)
-        from_date = now
+        from_date = now - timedelta(days=lookback_days)
 
         body = {
             "symbols": alt_symbols,

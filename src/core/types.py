@@ -60,6 +60,8 @@ class Order:
     stop_price: Optional[float] = None
     reduce_only: bool = False
     cloid: Optional[str] = None
+    leverage: float = 1.0
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -91,6 +93,7 @@ class PerpPosition:
     signal_source: str = ""
     entry_confidence: float = 0.0
     entry_funding_rate: float = 0.0
+    component_sources: list[str] = field(default_factory=list)
     fills: list[Fill] = field(default_factory=list)
 
     @property

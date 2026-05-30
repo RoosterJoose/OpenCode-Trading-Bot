@@ -76,6 +76,18 @@ class HyperliquidAdapter:
         self._latest_mids = {k: float(v) for k, v in (data.get("mids", data) if isinstance(data, dict) else data).items()}
         return self._latest_mids
 
+    async def fetch_asset_contexts(self) -> dict[str, dict]:
+        data = await self._info({"type": "metaAndAssetCtxs"})
+        if not isinstance(data, list) or len(data) != 2:
+            return {}
+        meta, ctxs = data
+        result = {}
+        for coin, ctx in zip(meta.get("universe", []), ctxs):
+            name = coin.get("name", "")
+            if name:
+                result[name] = ctx
+        return result
+
     async def fetch_candles(
         self, asset: str, interval: str = "1h", limit: int = 200
     ) -> list[PerpCandle]:
@@ -113,12 +125,8 @@ class HyperliquidAdapter:
         return candles
 
     async def fetch_funding(self, asset: Optional[str] = None) -> dict[str, float]:
-        data = await self._info({"type": "funding"})
-        result = {}
-        for entry in data if isinstance(data, list) else data.get("funding", []):
-            coin = entry.get("coin", entry.get("asset", ""))
-            rate = float(entry.get("fundingRate", entry.get("rate", 0)))
-            result[coin] = rate
+        ctxs = await self.fetch_asset_contexts()
+        result = {coin: float(ctx.get("funding") or 0.0) for coin, ctx in ctxs.items()}
         if asset:
             self._latest_funding[asset] = result.get(asset, 0.0)
             return {asset: self._latest_funding[asset]}
@@ -126,12 +134,8 @@ class HyperliquidAdapter:
         return result
 
     async def fetch_open_interest(self, asset: Optional[str] = None) -> dict[str, float]:
-        data = await self._info({"type": "openInterest"})
-        result = {}
-        for entry in data if isinstance(data, list) else data.get("oi", []):
-            coin = entry.get("coin", entry.get("asset", ""))
-            oi = float(entry.get("oi", entry.get("openInterest", 0)))
-            result[coin] = oi
+        ctxs = await self.fetch_asset_contexts()
+        result = {coin: float(ctx.get("openInterest") or 0.0) for coin, ctx in ctxs.items()}
         if asset:
             self._latest_oi[asset] = result.get(asset, 0.0)
             return {asset: self._latest_oi[asset]}
@@ -291,6 +295,7 @@ class HyperliquidAdapter:
         except ImportError:
             logger.warning("websockets not installed, WS data unavailable")
             return
+        self._running = True
         while self._running:
             try:
                 async with websockets.connect(HL_WS) as ws:

@@ -48,6 +48,7 @@ logger = logging.getLogger("hermes.loop")
 
 ASSET_UNIVERSE = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT"]
 TREND_UNIVERSE = {"BTC", "ETH", "SOL"}
+MIN_ENTRY_CONFIDENCE = 0.70
 
 
 class TradingLoop:
@@ -86,9 +87,18 @@ class TradingLoop:
         self._altfins_cycle = 0
         self._altfins = None
 
+    def _restore_paper_positions(self, exchange: PaperPerpExchange):
+        positions = self.store.get_state("positions") or []
+        exchange.restore_positions(positions)
+        for pos in exchange.positions.values():
+            self.risk.record_position_open(pos.asset)
+        if exchange.positions:
+            logger.info("Restored %d paper position(s)", len(exchange.positions))
+
     async def start(self):
         self.running = True
         exchange = PaperPerpExchange(self.config.get("exchange", {}).get("initial_balance", 10_000.0))
+        self._restore_paper_positions(exchange)
         hl = HyperliquidAdapter(
             wallet_address=self.config.get("hyperliquid", {}).get("wallet", ""),
             private_key=self.config.get("hyperliquid", {}).get("private_key", ""),
@@ -233,6 +243,7 @@ class TradingLoop:
                 "strategy": p.strategy,
                 "signal_source": p.signal_source,
                 "entry_confidence": p.entry_confidence,
+                "component_sources": p.component_sources,
             }
             for p in exchange.positions.values()
         ])
@@ -258,6 +269,8 @@ class TradingLoop:
         # Check exits first
         if pos and price > 0:
             for strat in self.strategies:
+                if pos.strategy and strat.name() != pos.strategy:
+                    continue
                 result = strat.should_exit(asset, pos, price, candles, funding_rate)
                 if result:
                     reason, limit = result
@@ -293,6 +306,8 @@ class TradingLoop:
                 continue
 
             side, confidence, meta = result
+            if confidence < MIN_ENTRY_CONFIDENCE:
+                continue
 
             # Leverage + stop sizing
             lev, lev_reason = self.risk.compute_leverage(asset, candles, side)
@@ -303,7 +318,7 @@ class TradingLoop:
 
             entry_price = meta.get("entry_price", price)
             qty, risk_dollars, max_notional = self.risk.position_size(
-                asset, exchange.equity, stop_pct, entry_price
+                asset, exchange.equity, stop_pct, entry_price, exchange.gross_exposure
             )
 
             if qty <= 0:
@@ -341,6 +356,8 @@ class TradingLoop:
                 quantity=qty,
                 stop_price=stop_price,
                 reduce_only=False,
+                leverage=lev,
+                metadata={"component_sources": meta.get("component_sources", [])},
             )
             order_id = await exchange.place_order(order)
             if order_id:
@@ -350,6 +367,7 @@ class TradingLoop:
                     pos.signal_source = f"{strat.name()}:{asset}"
                     pos.entry_confidence = confidence
                     pos.stop_loss = stop_price
+                    pos.component_sources = list(meta.get("component_sources", []))
                 self.risk.record_position_open(asset)
                 logger.info(
                     "PAPER %s %s qty=%.4f @ %.2f stop=%.2f lev=%.1fx risk=$%.0f conf=%.2f altfins=%d",
@@ -458,6 +476,8 @@ class TradingLoop:
         self.risk.record_trade(asset, pnl_pct, pnl_dollars)
         self.risk.record_position_close(asset)
         self.signal_tracker.record(pos.signal_source, pnl_pct > 0)
+        for source in pos.component_sources:
+            self.signal_tracker.record(source, pnl_pct > 0)
 
         trade = {
             "asset": asset,

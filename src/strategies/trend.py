@@ -102,16 +102,20 @@ class TrendFollow(PerpStrategy):
             confidence += 0.2
             sources.append("strong_trend")
 
+        component_sources = ["local:ema_cross" if cross_above else "local:trend_continuation", "local:adx_confirmed"]
+
         # Altfins signal validation — external signals validate regime, not additive boost
         altfins_confirm = False
         for s in signals:
             if s.asset != asset or s.direction != Side.LONG:
                 continue
             if s.source.startswith("altfins:"):
-                if any(kw in s.source for kw in ("momentum", "breakout", "uptrend", "cross", "trend", "channel_up")):
+                source_l = s.source.lower()
+                if any(kw in source_l for kw in ("momentum", "breakout", "uptrend", "cross", "trend", "channel_up")):
                     sig_weight = self.signal_tracker.weight(s.source) if self.signal_tracker else 0.5
                     if sig_weight > 0:
                         altfins_confirm = True
+                        component_sources.append(s.source)
                         sources.append(s.source.replace("altfins:", "") + f"_{sig_weight:.2f}")
         if altfins_confirm:
             confidence = min(confidence * 1.2, 0.95)
@@ -133,6 +137,7 @@ class TrendFollow(PerpStrategy):
             "adx": round(adx, 2) if adx is not None else None,
             "atr": round(atr, 4),
             "sources": sources,
+            "component_sources": component_sources,
         }
 
     def should_exit(
