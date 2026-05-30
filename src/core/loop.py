@@ -208,6 +208,40 @@ class TradingLoop:
         # 4b. Process external intents after all risk inputs are fresh.
         await self._process_external_intents(exchange, hl)
 
+        # 4c. Export external data snapshot for Freqtrade lab
+        try:
+            altfins_signals = []
+            for asset_sigs in self.signal_cache.values():
+                for s in asset_sigs:
+                    altfins_signals.append({
+                        "asset": s.asset, "source": s.source,
+                        "direction": s.direction.value,
+                        "confidence": s.confidence,
+                        "bucket": s.bucket,
+                        "timestamp": s.timestamp.isoformat() if s.timestamp else None,
+                    })
+            altfins_indicators = {}
+            if self._altfins:
+                altfins_indicators = self._altfins._cached_indicators
+            snapshot = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "funding": dict(exchange._funding_rates),
+                "oi": dict(exchange._open_interest),
+                "oi_velocity": {
+                    a: self.risk.oi_velocity(a)
+                    for a in self.assets
+                },
+                "altfins_signal_count": len(altfins_signals),
+                "altfins_signals": altfins_signals[:50],
+                "altfins_indicators": altfins_indicators,
+            }
+            snapshot_path = self.data_dir / "external_snapshot.json"
+            tmp = snapshot_path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(snapshot, indent=2, default=str))
+            tmp.rename(snapshot_path)
+        except Exception as e:
+            logger.debug("snapshot export: %s", e)
+
         # 5. Process each asset
         for asset in self.assets:
             candles = self.candle_cache.get(asset, [])

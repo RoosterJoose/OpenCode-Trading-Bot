@@ -1,10 +1,16 @@
+import json
+import os
 from datetime import datetime
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from pandas import DataFrame
 
 from freqtrade.persistence import Trade
 from freqtrade.strategy import IStrategy
+
+SNAPSHOT_PATH = os.environ.get("HERMES_SNAPSHOT", "/hermes-data/external_snapshot.json")
 
 
 class HermesPerpStrategy(IStrategy):
@@ -67,6 +73,20 @@ class HermesPerpStrategy(IStrategy):
     trend_strong_regime_boost = 0.2
     trend_funding_boost = 0.1
 
+    _ext_snapshot: dict | None = None
+
+    def _load_snapshot(self) -> dict | None:
+        if HermesPerpStrategy._ext_snapshot is not None:
+            return HermesPerpStrategy._ext_snapshot
+        try:
+            p = Path(SNAPSHOT_PATH)
+            if p.exists():
+                HermesPerpStrategy._ext_snapshot = json.loads(p.read_text())
+                return HermesPerpStrategy._ext_snapshot
+        except Exception:
+            pass
+        return None
+
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         close = dataframe["close"]
         high = dataframe["high"]
@@ -121,14 +141,48 @@ class HermesPerpStrategy(IStrategy):
         dataframe["bb_lower"] = bb_mid - 2.0 * bb_std
         dataframe["bb_upper"] = bb_mid + 2.0 * bb_std
 
+        # ── External data from Hermes snapshot (funding, Altfins) ──
+        pair = metadata.get("pair", "")
+        asset = pair.split("/")[0] if pair else ""
+        ext = self._load_snapshot()
+        funding_rate = 0.0
+        has_altfins_trend_conf = False
+        has_altfins_mr_conf = False
+        if ext is not None and asset:
+            funding_rate = ext.get("funding", {}).get(asset, 0.0)
+            for sig in ext.get("altfins_signals", []):
+                if sig.get("asset") != asset or sig.get("confidence", 0) < 0.5:
+                    continue
+                dir_str = sig.get("direction", "").upper()
+                src = sig.get("source", "")
+                if dir_str == "LONG":
+                    if any(kw in src for kw in ("momentum", "breakout", "uptrend", "cross", "trend", "channel_up")):
+                        has_altfins_trend_conf = True
+                    if any(kw in src for kw in ("oversold", "support", "pullback", "bollinger_touch_lower")):
+                        has_altfins_mr_conf = True
+
+        dataframe["funding_rate"] = funding_rate
+
         mr_conf = pd.Series(self.mr_base_conf, index=dataframe.index)
         mr_conf += (dataframe["rsi"] <= self.mr_deep_oversold_threshold).astype(float) * self.mr_deep_oversold_boost
         mr_conf += dataframe["regime_mr"].astype(float) * self.mr_regime_boost
+        if funding_rate < self.mr_funding_threshold:
+            mr_conf += self.mr_funding_boost
+        if has_altfins_mr_conf:
+            mr_conf = mr_conf * 1.2
+        else:
+            mr_conf = mr_conf * 0.85
         mr_conf = mr_conf.clip(upper=1.0)
         dataframe["mr_confidence"] = mr_conf
 
         trend_conf = pd.Series(self.trend_base_conf, index=dataframe.index)
         trend_conf += dataframe["regime_strong_trend"].astype(float) * self.trend_strong_regime_boost
+        if funding_rate < self.trend_funding_tailwind:
+            trend_conf += self.trend_funding_boost
+        if has_altfins_trend_conf:
+            trend_conf = trend_conf * 1.2
+        else:
+            trend_conf = trend_conf * 0.85
         trend_conf = trend_conf.clip(upper=1.0)
         dataframe["trend_confidence"] = trend_conf
 
@@ -187,6 +241,8 @@ class HermesPerpStrategy(IStrategy):
         stop_dist_pct = max(self.stop_min_pct / 100, min(atr_pct * mult, self.stop_max_pct / 100))
         stop_price = entry * (1 - stop_dist_pct)
 
+        funding_rate = float(row.get("funding_rate", 0) or 0)
+
         if trade.enter_tag is not None and trade.enter_tag.startswith("mr"):
             if current_rate <= stop_price:
                 return "stop_loss"
@@ -198,6 +254,8 @@ class HermesPerpStrategy(IStrategy):
                 return "mr_tp2"
             if r_mult >= self.mr_tp1_r_mult:
                 return "mr_tp1"
+            if funding_rate > self.mr_funding_halt:
+                return "funding_spike"
 
         if trade.enter_tag is not None and trade.enter_tag.startswith("trend"):
             if current_rate <= stop_price:
@@ -220,6 +278,8 @@ class HermesPerpStrategy(IStrategy):
                     if psar is not None and current_rate <= psar:
                         return "psar"
 
+            if funding_rate > self.trend_funding_drag:
+                return "funding_drag"
             fast = row.get("ema_fast", 0)
             slow = row.get("ema_slow", 0)
             if fast > 0 and slow > 0 and fast < slow:
