@@ -18,8 +18,8 @@ class TrendFollow(PerpStrategy):
         slow_period: int = 21,
         adx_period: int = 14,
         adx_threshold: float = 25.0,
-        atr_period: int = 14,
-        atr_chandelier_mult: float = 2.5,
+        atr_period: int = 24,
+        atr_chandelier_mult: float = 3.0,
         min_volume_usd: float = 5_000_000,
         cooldown_cycles: int = 60,
         majors: set | None = None,
@@ -132,7 +132,11 @@ class TrendFollow(PerpStrategy):
         if atr <= 0:
             return None
 
-        chandelier = max(c.close for c in candles[-self.atr_period:]) - (atr * self.atr_chandelier_mult)
+        atr_dist = atr * self.atr_chandelier_mult
+        min_dist = 0.015 * current_price  # 1.5% minimum
+        max_dist = 0.04 * current_price   # 4.0% maximum
+        stop_dist = max(min_dist, min(max_dist, atr_dist))
+        chandelier = max(c.high for c in candles[-self.atr_period:]) - stop_dist
         if current_price <= chandelier:
             return "chandelier", current_price
 

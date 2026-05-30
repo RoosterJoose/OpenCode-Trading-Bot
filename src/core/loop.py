@@ -16,6 +16,7 @@ Main trading loop — Hyperliquid perps with semi-auto mode.
 import asyncio
 import json
 import logging
+import math
 import os
 import signal as sig
 from collections import defaultdict
@@ -262,6 +263,13 @@ class TradingLoop:
                     await self._close(asset, pos, price, reason, exchange)
                     return
 
+        # Infer regime
+        regime = self._infer_regime(candles)
+
+        # Dead market — skip entries entirely
+        if regime == RegimeType.DEAD_MARKET and not pos:
+            return
+
         # Check risk gates
         risk_ok, risk_msg = self.risk.allow_entry(exchange.gross_exposure, exchange.effective_leverage)
         if not risk_ok:
@@ -274,8 +282,6 @@ class TradingLoop:
         funding_ok, funding_msg = self.risk.funding_gate(funding_rate)
         if not funding_ok:
             return
-
-        regime = self._infer_regime(candles)
 
         # Evaluate entries
         for strat in self.strategies:
@@ -355,30 +361,65 @@ class TradingLoop:
                 logger.info("PENDING PARAM CHANGES: %d suggestions", len(self._suggested_params))
 
     def _infer_regime(self, candles: list[PerpCandle]) -> RegimeType:
-        if len(candles) < 60:
+        if len(candles) < 100:
             return RegimeType.RANDOM_WALK
 
         closes = [c.close for c in candles]
-        sma20 = sum(closes[-20:]) / 20
-        sma50 = sum(closes[-50:]) / 50
         last = closes[-1]
-        trend_gap = (sma20 - sma50) / sma50 if sma50 else 0.0
 
+        # Normalized volatility (ATR_14 / price)
         trs = []
         for i in range(-14, 0):
             h, l, pc = candles[i].high, candles[i].low, candles[i - 1].close
             trs.append(max(h - l, abs(h - pc), abs(l - pc)))
-        atr_pct = (sum(trs) / len(trs)) / last if trs and last else 0.0
+        atr = sum(trs) / len(trs) if trs else 0
+        norm_vol = atr / last if last > 0 else 0
 
-        if atr_pct > 0.035:
+        if norm_vol > 0.03:
             return RegimeType.HIGH_VOL
-        if last > sma20 > sma50 and trend_gap > 0.012:
-            return RegimeType.STRONGLY_TRENDING
-        if last > sma20 > sma50 and trend_gap > 0.004:
-            return RegimeType.TRENDING
-        if abs(trend_gap) < 0.003:
+        if norm_vol < 0.0015:
+            return RegimeType.DEAD_MARKET
+
+        # Hurst exponent for structural regime classification
+        h = self._hurst(closes)
+
+        if h < 0.45:
             return RegimeType.MEAN_REVERTING
-        return RegimeType.RANDOM_WALK
+        elif h <= 0.55:
+            return RegimeType.RANDOM_WALK
+        else:
+            return RegimeType.TRENDING
+
+    @staticmethod
+    def _hurst(prices: list[float]) -> float:
+        n = len(prices)
+        if n < 100:
+            return 0.5
+        max_lag = min(n // 2, 100)
+        log_lags = []
+        log_tau = []
+        for lag in range(2, max_lag):
+            diffs = [prices[i] - prices[i - lag] for i in range(lag, n)]
+            if not diffs:
+                continue
+            var = sum(d * d for d in diffs) / len(diffs)
+            if var <= 0:
+                continue
+            std = math.sqrt(var)
+            log_lags.append(math.log(lag))
+            log_tau.append(math.log(std))
+        if len(log_lags) < 3:
+            return 0.5
+        n_pts = len(log_lags)
+        sum_x = sum(log_lags)
+        sum_y = sum(log_tau)
+        sum_xy = sum(x * y for x, y in zip(log_lags, log_tau))
+        sum_xx = sum(x * x for x in log_lags)
+        denom = n_pts * sum_xx - sum_x * sum_x
+        if denom == 0:
+            return 0.5
+        slope = (n_pts * sum_xy - sum_x * sum_y) / denom
+        return slope / 2
 
     async def _close(
         self,

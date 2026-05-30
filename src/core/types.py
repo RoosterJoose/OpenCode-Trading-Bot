@@ -185,3 +185,4 @@ class RegimeType(Enum):
     TRENDING = "trending"
     STRONGLY_TRENDING = "strongly_trending"
     HIGH_VOL = "high_volatility"
+    DEAD_MARKET = "dead_market"
