@@ -139,11 +139,8 @@ class AltfinsAdapter:
         }
 
         try:
-            data = await self._post("/signals-feed/search-requests", {
-                ...body,
-                "page": 0,
-                "size": 50,
-            })
+            payload = {**body, "page": 0, "size": 50}
+            data = await self._post("/signals-feed/search-requests", payload)
         except Exception as e:
             logger.debug("Altfins signals error: %s", e)
             return self._cached_signals
