@@ -250,7 +250,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         pass
 
 
-def serve(db_path: Path = Path("data/hermes.db"), port: int = 8080):
+def serve(db_path: Path = Path("data/hermes.db"), port: int = 8081):
     class Handler(DashboardHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, db_path=db_path, **kwargs)
@@ -265,4 +265,5 @@ def serve(db_path: Path = Path("data/hermes.db"), port: int = 8080):
 
 if __name__ == "__main__":
     db = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("data/hermes.db")
-    serve(db)
+    port = int(sys.argv[2]) if len(sys.argv) > 2 else 8081
+    serve(db, port)
