@@ -141,7 +141,7 @@ class PaperPerpExchange:
         if pos is None:
             return None
         pnl = self._compute_pnl(pos, price)
-        self.balance += pnl["realized_pnl"]
+        self.balance += pnl["realized"]
         return pnl
 
     def _revalue_position(self, asset: str):
