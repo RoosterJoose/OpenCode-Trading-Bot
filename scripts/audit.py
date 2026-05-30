@@ -116,7 +116,7 @@ def check_db(failures: list[str], db_path: Path):
 
 
 def check_dashboard(failures: list[str], base_url: str):
-    for path in ["/api/status", "/api/positions", "/api/trades", "/api/signals", "/api/markets", "/api/reflection", "/api/readiness"]:
+    for path in ["/api/status", "/api/positions", "/api/trades", "/api/signals", "/api/markets", "/api/reflection", "/api/readiness", "/api/intents"]:
         try:
             raw = urllib.request.urlopen(base_url + path, timeout=8).read().decode()
             json.loads(raw)
