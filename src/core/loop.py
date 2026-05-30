@@ -305,12 +305,29 @@ class TradingLoop:
             self._daily_signals_log.append(signal_entry)
             self.store.put_state(f"last_signal_{asset}", signal_entry)
 
-            logger.info(
-                "SIGNAL %s %s %s | conf=%.2f entry=%.2f stop=%.2f(%.1f%%) lev=%.1fx qty=%.4f risk=$%.0f OI=%.1f%% fund=%.4f",
-                side.value.upper(), asset, strat.name(), confidence,
-                entry_price, stop_price, stop_pct, lev, qty, risk_dollars,
-                oi_vel, funding_rate,
+            # Execute paper trade
+            order = Order(
+                asset=asset,
+                side=side,
+                order_type=OrderType.MARKET,
+                quantity=qty,
+                stop_price=stop_price,
+                reduce_only=False,
             )
+            order_id = await exchange.place_order(order)
+            if order_id:
+                pos = exchange.positions.get(asset)
+                if pos:
+                    pos.strategy = strat.name()
+                    pos.signal_source = f"{strat.name()}:{asset}"
+                    pos.entry_confidence = confidence
+                    pos.stop_loss = stop_price
+                logger.info(
+                    "PAPER %s %s qty=%.4f @ %.2f stop=%.2f lev=%.1fx risk=$%.0f conf=%.2f altfins=%d",
+                    side.value.upper(), asset, qty, entry_price, stop_price, lev,
+                    risk_dollars, confidence,
+                    len(altfins_sigs),
+                )
 
             if self._suggested_params:
                 self.store.put_state("pending_param_changes", self._suggested_params)
