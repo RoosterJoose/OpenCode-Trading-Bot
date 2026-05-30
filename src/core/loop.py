@@ -128,6 +128,8 @@ class TradingLoop:
         logger.info("Shutdown complete")
 
     async def _cycle(self, hl: HyperliquidAdapter, exchange: PaperPerpExchange):
+        if self._cycle_count % 5 == 0:
+            logger.info("heartbeat cycle=%d", self._cycle_count)
         # 1. Fetch market data
         try:
             mids = await hl.fetch_all_mids()
