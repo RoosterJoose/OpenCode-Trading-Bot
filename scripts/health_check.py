@@ -1,10 +1,6 @@
 """
 Health check — run by systemd timer every 5 minutes.
-Restarts the bot if:
-  - No equity snapshot in the last 6 minutes (bot process hung)
-  - DB file is inaccessible
-  - Process running but no recent heartbeat in journal
-
+Restarts the bot if no equity snapshot in the last 6 minutes.
 Exit codes:
   0 = healthy
   1 = unhealthy, recovery attempted
@@ -14,12 +10,10 @@ Exit codes:
 import sqlite3
 import subprocess
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-DATA_DIR = Path("/opt/hermes-trading-bot/data")
-DB_PATH = DATA_DIR / "hermes.db"
+DB_PATH = Path("/opt/hermes-trading-bot/data/hermes.db")
 SERVICE = "hermes-bot.service"
 STALE_MINUTES = 6
 
@@ -49,23 +43,6 @@ def check_db():
         return False
 
 
-def check_journal():
-    try:
-        result = subprocess.run(
-            ["journalctl", "-u", SERVICE, "--since", "10 min ago", "--no-pager", "-o", "cat"],
-            capture_output=True, text=True, timeout=15,
-        )
-        if "heartbeat" in result.stdout:
-            print("HEALTH: Heartbeat found in recent journal")
-            return True
-        else:
-            print("HEALTH: No heartbeat in last 10 min")
-            return False
-    except Exception as e:
-        print(f"HEALTH: journalctl error: {e}")
-        return None
-
-
 def restart_bot():
     print(f"HEALTH: Attempting restart of {SERVICE}...")
     result = subprocess.run(
@@ -81,7 +58,6 @@ def restart_bot():
 
 def main():
     db_ok = check_db()
-    journal_ok = check_journal()
 
     if db_ok:
         print("HEALTH: PASS")
