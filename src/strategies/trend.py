@@ -89,6 +89,16 @@ class TrendFollow(PerpStrategy):
             confidence += 0.2
             sources.append("strong_trend")
 
+        # Altfins signal boost — momentum/breakout signals in trend direction
+        for s in signals:
+            if s.asset != asset or s.direction != Side.LONG:
+                continue
+            if s.source.startswith("altfins:"):
+                if any(kw in s.source for kw in ("momentum", "breakout", "uptrend", "cross", "trend", "channel_up")):
+                    boost = s.confidence * 0.15
+                    confidence += boost
+                    sources.append(s.source.replace("altfins:", ""))
+
         if funding_rate < -0.0005:
             confidence += 0.1
             sources.append("funding_tailwind")

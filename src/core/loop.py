@@ -157,6 +157,15 @@ class TradingLoop:
                     existing = [s for s in existing if s.source != sig.source]
                     existing.append(sig)
                     self.signal_cache[sig.asset] = existing[-20:]
+
+                # Log ensemble scores for visibility
+                ensemble_sigs = [s for s in altfins_signals if s.source == "altfins:ensemble"]
+                for es in ensemble_sigs:
+                    if es.confidence >= 0.5:
+                        logger.info("Altfins: %s %s score=%.2f signals=%d",
+                                     es.asset, es.direction.value.upper(),
+                                     es.confidence,
+                                     es.metadata.get("signal_count", 0))
             except Exception as e:
                 logger.debug("altfins fetch: %s", e)
 

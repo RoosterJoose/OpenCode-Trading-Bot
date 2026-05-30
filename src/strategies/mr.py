@@ -96,6 +96,16 @@ class MeanReversion(PerpStrategy):
             confidence += 0.2
             sources.append("deep_oversold")
 
+        # Altfins signal boost — oversold/oversold indicators and reversal signals
+        for s in signals:
+            if s.asset != asset or s.direction != Side.LONG:
+                continue
+            if s.source.startswith("altfins:"):
+                if "oversold" in s.source or "pullback" in s.source or "bollinger_touch_lower" in s.source:
+                    boost = s.confidence * 0.15
+                    confidence += boost
+                    sources.append(s.source.replace("altfins:", ""))
+
         if funding_rate < -self.funding_threshold:
             confidence += 0.15
             sources.append("funding_support")
