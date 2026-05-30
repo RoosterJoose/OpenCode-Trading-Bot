@@ -79,16 +79,29 @@ class HyperliquidAdapter:
     async def fetch_candles(
         self, asset: str, interval: str = "1h", limit: int = 200
     ) -> list[PerpCandle]:
+        now_ms = int(time.time() * 1000)
+        # Approximate candle durations in ms for startTime calculation
+        interval_ms = {
+            "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000,
+            "30m": 1_800_000, "1h": 3_600_000, "2h": 7_200_000,
+            "4h": 14_400_000, "8h": 28_800_000, "12h": 57_600_000,
+            "1d": 864_000_00, "3d": 259_200_000, "1w": 604_800_000, "1M": 2_592_000_000,
+        }.get(interval, 3_600_000)
+        start_ms = now_ms - (limit * interval_ms)
+
         data = await self._info({
             "type": "candleSnapshot",
-            "coin": asset,
-            "interval": interval,
-            "limit": limit,
+            "req": {
+                "coin": asset,
+                "interval": interval,
+                "startTime": start_ms,
+                "endTime": now_ms,
+            },
         })
         candles = []
         for raw in data if isinstance(data, list) else data.get("candles", []):
             candles.append(PerpCandle(
-                timestamp=int(raw["t"]) if "t" in raw else int(raw.get("time", 0)),
+                timestamp=int(raw["t"]),
                 open=float(raw["o"]),
                 high=float(raw["h"]),
                 low=float(raw["l"]),
