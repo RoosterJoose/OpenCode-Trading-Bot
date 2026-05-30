@@ -10,7 +10,7 @@ Exit codes:
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 DB_PATH = Path("/opt/hermes-trading-bot/data/hermes.db")
@@ -32,7 +32,8 @@ def check_db():
             return True
         ts_str = row[0]
         ts = datetime.fromisoformat(ts_str)
-        age_minutes = (datetime.now(timezone.utc) - ts).total_seconds() / 60
+        now = datetime.utcnow()
+        age_minutes = (now - ts).total_seconds() / 60
         if age_minutes > STALE_MINUTES:
             print(f"HEALTH: STALE — last snapshot {age_minutes:.0f} min ago at {ts_str} (limit: {STALE_MINUTES})")
             return False
