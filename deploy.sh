@@ -47,7 +47,7 @@ Type=simple
 User=hermes
 Group=hermes
 WorkingDirectory=/opt/hermes-trading-bot
-ExecStart=/opt/hermes-trading-bot/.venv/bin/python src/main.py
+ExecStart=/opt/hermes-trading-bot/.venv/bin/python -m src.main
 Restart=on-failure
 RestartSec=10
 StandardOutput=append:/opt/hermes-trading-bot/data/output.log
@@ -64,6 +64,7 @@ SERVICE
 echo "==> 6. Creating auto-update timer (checks every 5 min)..."
 sudo tee /opt/hermes-trading-bot/scripts/auto-update.sh > /dev/null <<'UPDATE'
 #!/usr/bin/env bash
+export GIT_SSH_COMMAND="ssh -i /home/hermes/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new"
 cd /opt/hermes-trading-bot
 sudo -u hermes git fetch origin master &>/dev/null
 LOCAL=$(git rev-parse HEAD)
@@ -71,8 +72,8 @@ REMOTE=$(git rev-parse origin/master)
 if [ "$LOCAL" != "$REMOTE" ]; then
     echo "[$(date)] New commit detected: $REMOTE. Updating and restarting..."
     sudo -u hermes git pull origin master --ff-only
-    # Re-install deps if pyproject changed
-    sudo -u hermes /opt/hermes-trading-bot/.venv/bin/pip install --quiet -e . 2>/dev/null || true
+    sudo -u hermes /opt/hermes-trading-bot/.venv/bin/pip install --quiet httpx websockets
+    echo "[$(date)] Update complete. Restarting service..."
     sudo systemctl restart hermes-bot
 fi
 UPDATE

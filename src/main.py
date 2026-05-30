@@ -18,6 +18,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Ensure repo root is on sys.path (works when run via python src/main.py
+# or python -m src.main from the project root)
+_repo_root = Path(__file__).resolve().parent.parent
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
 from src.core.loop import TradingLoop
 
 DEFAULT_CONFIG = {
