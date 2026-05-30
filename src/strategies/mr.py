@@ -28,6 +28,7 @@ class MeanReversion(PerpStrategy):
         tp2_r_mult: float = 1.5,
         tp3_r_mult: float = 3.0,
         majors: set | None = None,
+        signal_tracker=None,
     ):
         self.rsi_oversold = rsi_oversold
         self.rsi_period = rsi_period
@@ -38,6 +39,7 @@ class MeanReversion(PerpStrategy):
         self.tp2_r_mult = tp2_r_mult
         self.tp3_r_mult = tp3_r_mult
         self.majors = majors or {"BTC", "ETH"}
+        self.signal_tracker = signal_tracker
         self._cooldowns: dict[str, int] = {}
 
     def name(self) -> str:
@@ -96,15 +98,23 @@ class MeanReversion(PerpStrategy):
             confidence += 0.2
             sources.append("deep_oversold")
 
-        # Altfins signal boost — oversold/oversold indicators and reversal signals
+        # Altfins signal validation — external signals validate direction, not additive boost
+        altfins_confirm = False
         for s in signals:
             if s.asset != asset or s.direction != Side.LONG:
                 continue
             if s.source.startswith("altfins:"):
                 if "oversold" in s.source or "pullback" in s.source or "bollinger_touch_lower" in s.source:
-                    boost = s.confidence * 0.15
-                    confidence += boost
-                    sources.append(s.source.replace("altfins:", ""))
+                    sig_weight = self.signal_tracker.weight(s.source) if self.signal_tracker else 0.5
+                    if sig_weight > 0:
+                        altfins_confirm = True
+                        sources.append(s.source.replace("altfins:", "") + f"_{sig_weight:.2f}")
+        if altfins_confirm:
+            confidence = min(confidence * 1.2, 0.95)
+            sources.append("altfins_validated")
+        else:
+            confidence *= 0.85
+            sources.append("no_altfins_confirm")
 
         if funding_rate < -self.funding_threshold:
             confidence += 0.15

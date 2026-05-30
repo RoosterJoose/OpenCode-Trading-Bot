@@ -69,8 +69,8 @@ class TradingLoop:
         self.reflector = WeeklyReflector(self.signal_tracker)
 
         self.strategies: list[PerpStrategy] = [
-            MeanReversion(),
-            TrendFollow(),
+            MeanReversion(signal_tracker=self.signal_tracker),
+            TrendFollow(signal_tracker=self.signal_tracker),
         ]
 
         self.assets = list(
@@ -138,6 +138,7 @@ class TradingLoop:
                 price = mids.get(asset, 0.0)
                 if price > 0:
                     exchange.update_price(asset, price)
+                    self.risk.record_price(asset, price)
         except Exception as e:
             logger.debug("fetch mids: %s", e)
 
@@ -349,6 +350,7 @@ class TradingLoop:
                     pos.signal_source = f"{strat.name()}:{asset}"
                     pos.entry_confidence = confidence
                     pos.stop_loss = stop_price
+                self.risk.record_position_open(asset)
                 logger.info(
                     "PAPER %s %s qty=%.4f @ %.2f stop=%.2f lev=%.1fx risk=$%.0f conf=%.2f altfins=%d",
                     side.value.upper(), asset, qty, entry_price, stop_price, lev,
@@ -454,6 +456,7 @@ class TradingLoop:
         r_mult = ((price - pos.entry_price) / pos.entry_price * pos.leverage) if pos.entry_price > 0 else 0.0
 
         self.risk.record_trade(asset, pnl_pct, pnl_dollars)
+        self.risk.record_position_close(asset)
         self.signal_tracker.record(pos.signal_source, pnl_pct > 0)
 
         trade = {

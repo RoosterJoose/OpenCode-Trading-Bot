@@ -28,6 +28,7 @@ class TrendFollow(PerpStrategy):
         min_volume_usd: float = 5_000_000,
         cooldown_cycles: int = 60,
         majors: set | None = None,
+        signal_tracker=None,
     ):
         self.fast_period = fast_period
         self.slow_period = slow_period
@@ -41,6 +42,7 @@ class TrendFollow(PerpStrategy):
         self.min_volume_usd = min_volume_usd
         self.cooldown_cycles = cooldown_cycles
         self.majors = majors or {"BTC", "ETH"}
+        self.signal_tracker = signal_tracker
         self._cooldowns: dict[str, int] = {}
 
     def name(self) -> str:
@@ -100,15 +102,23 @@ class TrendFollow(PerpStrategy):
             confidence += 0.2
             sources.append("strong_trend")
 
-        # Altfins signal boost — momentum/breakout signals in trend direction
+        # Altfins signal validation — external signals validate regime, not additive boost
+        altfins_confirm = False
         for s in signals:
             if s.asset != asset or s.direction != Side.LONG:
                 continue
             if s.source.startswith("altfins:"):
                 if any(kw in s.source for kw in ("momentum", "breakout", "uptrend", "cross", "trend", "channel_up")):
-                    boost = s.confidence * 0.15
-                    confidence += boost
-                    sources.append(s.source.replace("altfins:", ""))
+                    sig_weight = self.signal_tracker.weight(s.source) if self.signal_tracker else 0.5
+                    if sig_weight > 0:
+                        altfins_confirm = True
+                        sources.append(s.source.replace("altfins:", "") + f"_{sig_weight:.2f}")
+        if altfins_confirm:
+            confidence = min(confidence * 1.2, 0.95)
+            sources.append("altfins_validated")
+        else:
+            confidence *= 0.85
+            sources.append("no_altfins_confirm")
 
         if funding_rate < -0.0005:
             confidence += 0.1

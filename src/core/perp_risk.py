@@ -7,6 +7,7 @@ NotebookLM-verified parameters used throughout.
 
 import logging
 import math
+import statistics
 from collections import defaultdict
 from datetime import date, datetime, timezone
 from typing import Optional
@@ -57,6 +58,7 @@ class PerpRiskManager:
         self.last_reset_date = date.today()
         self.highest_dd: float = 0.0
         self.daily_pnl: float = 0.0
+        self.max_concurrent_positions: int = 3
         self._consecutive_losses: dict[str, int] = defaultdict(int)
         self._oi_history: dict[str, list[tuple[int, float]]] = defaultdict(list)
         self._trade_pnls: list[float] = []
@@ -65,6 +67,9 @@ class PerpRiskManager:
         self._signal_outcomes: dict[str, list[bool]] = defaultdict(list)
         self._param_feedback: dict[str, list[float]] = defaultdict(list)
         self._equity_snapshots: list[tuple[datetime, float]] = []
+        self._price_history: dict[str, list[float]] = defaultdict(lambda: [])
+        self._recent_outcomes: list[bool] = []
+        self._active_positions: set[str] = set()
 
     def update_equity(self, equity: float, gross_exposure: float):
         self.current_equity = equity
@@ -91,6 +96,8 @@ class PerpRiskManager:
         dd = self.current_drawdown()
         if dd >= self.max_drawdown_pct:
             return False, f"drawdown_halt: {dd:.1f}% >= {self.max_drawdown_pct}%"
+        if len(self._active_positions) >= self.max_concurrent_positions:
+            return False, f"max_positions: {len(self._active_positions)} >= {self.max_concurrent_positions}"
         daily_loss = (
             (self.current_equity - self.daily_start_equity)
             / self.daily_start_equity * 100
@@ -182,9 +189,17 @@ class PerpRiskManager:
         max_notional = risk_dollars / (stop_distance_pct / 100)
         quantity = max_notional / price if price > 0 else 0
 
-        streak = self._consecutive_losses.get(asset, 0)
-        streak_scalar = max(0.25, 0.5 ** streak)
-        quantity *= streak_scalar
+        # BTC correlation penalty: Size *= (1 - |ρ_btc|)
+        corr = self.btc_correlation(asset)
+        if corr is not None:
+            quantity *= max(0.1, 1.0 - abs(corr))
+
+        # Linear streak modifier over last 10 trades
+        if self._recent_outcomes:
+            recent = self._recent_outcomes[-10:]
+            wins = sum(recent)
+            phi = max(0.5, min(1.5, 1.0 + (wins - (len(recent) - wins)) / 10.0))
+            quantity *= phi
 
         port_notional = self.gross_exposure()
         remaining_capacity = (self.max_portfolio_leverage * equity) - port_notional
@@ -192,6 +207,32 @@ class PerpRiskManager:
         quantity = min(quantity, max_qty)
 
         return quantity, risk_dollars, max_notional
+
+    def record_price(self, asset: str, price: float):
+        history = self._price_history[asset]
+        history.append(price)
+        self._price_history[asset] = history[-100:]
+
+    def btc_correlation(self, asset: str) -> Optional[float]:
+        if asset == "BTC":
+            return None
+        btc_prices = self._price_history.get("BTC", [])
+        asset_prices = self._price_history.get(asset, [])
+        if len(btc_prices) < 30 or len(asset_prices) < 30:
+            return None
+        n = min(len(btc_prices), len(asset_prices))
+        btc_recent = btc_prices[-n:]
+        asset_recent = asset_prices[-n:]
+        try:
+            return statistics.correlation(btc_recent, asset_recent)
+        except statistics.StatisticsError:
+            return None
+
+    def record_position_open(self, asset: str):
+        self._active_positions.add(asset)
+
+    def record_position_close(self, asset: str):
+        self._active_positions.discard(asset)
 
     def gross_exposure(self) -> float:
         return 0.0
@@ -203,6 +244,8 @@ class PerpRiskManager:
             self._consecutive_losses[asset] = 0
         self._trade_pnls.append(pnl_pct)
         self._total_trades += 1
+        self._recent_outcomes.append(pnl_pct > 0)
+        self._recent_outcomes = self._recent_outcomes[-10:]
         if pnl_pct > 0:
             self._total_wins += 1
         self.daily_pnl += pnl_dollars
@@ -258,6 +301,72 @@ class PerpRiskManager:
                 best_val = (low + high) / 2
         return best_val
 
+    def paper_to_live_readiness(self) -> dict:
+        mr_pnls = []
+        trend_pnls = []
+        out = self._signal_outcomes
+        for source, outcomes in out.items():
+            if source.startswith("mr:"):
+                mr_pnls.extend(
+                    1 if o else -1 for o in outcomes
+                )
+            elif source.startswith("trend:"):
+                trend_pnls.extend(
+                    1 if o else -1 for o in outcomes
+                )
+
+        def _sharpe_for(pnls):
+            if len(pnls) < 5:
+                return 0.0
+            m = sum(pnls) / len(pnls)
+            s = math.sqrt(sum((p - m) ** 2 for p in pnls) / len(pnls))
+            return (m / s) * math.sqrt(365) if s > 0 else 0.0
+
+        def _pf_for(pnls):
+            wins = sum(p for p in pnls if p > 0)
+            losses = abs(sum(p for p in pnls if p < 0))
+            return wins / losses if losses > 0 else float("inf")
+
+        def _wr_for(pnls):
+            return sum(1 for p in pnls if p > 0) / len(pnls) if pnls else 0.0
+
+        total = self._total_trades
+        mr_sharpe = _sharpe_for(mr_pnls)
+        trend_sharpe = _sharpe_for(trend_pnls)
+        mr_pf = _pf_for(mr_pnls)
+        trend_pf = _pf_for(trend_pnls)
+        mr_wr = _wr_for(mr_pnls)
+        trend_wr = _wr_for(trend_pnls)
+        dd = self.current_drawdown()
+
+        checks = {
+            "min_trades_50": total >= 50,
+            "sharpe_ge_1.5": _sharpe_for(self._trade_pnls) >= 1.5,
+            "mr_pf_gt_1.5": mr_pf > 1.5 if mr_pnls else False,
+            "trend_pf_gt_1.2": trend_pf > 1.2 if trend_pnls else False,
+            "drawdown_lt_15": dd < 15.0,
+            "mr_wr_gt_0.55": mr_wr > 0.55 if mr_pnls else False,
+            "trend_wr_gt_0.40": trend_wr > 0.40 if trend_pnls else False,
+        }
+        passed = sum(1 for v in checks.values() if v)
+        return {
+            "ready": passed >= 5,
+            "checks_passed": passed,
+            "checks_total": len(checks),
+            "details": checks,
+            "stats": {
+                "total_trades": total,
+                "mr_trades": len(mr_pnls),
+                "trend_trades": len(trend_pnls),
+                "sharpe": round(_sharpe_for(self._trade_pnls), 2),
+                "mr_pf": round(mr_pf, 2) if mr_pnls else None,
+                "trend_pf": round(trend_pf, 2) if trend_pnls else None,
+                "drawdown_pct": round(dd, 2),
+                "mr_wr": round(mr_wr, 3) if mr_pnls else None,
+                "trend_wr": round(trend_wr, 3) if trend_pnls else None,
+            },
+        }
+
     def status(self) -> dict:
         dd = self.current_drawdown()
         daily_loss = (
@@ -273,6 +382,8 @@ class PerpRiskManager:
             "win_rate": round(self.win_rate, 3),
             "sharpe": round(self.sharpe, 3),
             "profit_factor": round(self.profit_factor, 3),
+            "active_positions": len(self._active_positions),
+            "max_positions": self.max_concurrent_positions,
         }
 
     def _atr_pct(self, candles: list[PerpCandle], period: int = 14) -> Optional[float]:

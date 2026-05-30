@@ -23,26 +23,36 @@ from src.core.types import ParameterSuggestion, Side, TradeRecord
 class SignalTracker:
     DECAY_WINDOW = 100
     RETIRE_ACCURACY = 0.48
-    REACTIVATE_ACCURACY = 0.52
+    REACTIVATE_ACCURACY = 0.55
+    REACTIVATE_MIN_TRADES = 50
     MIN_PREDICTIONS = 10
+    DECAY_LAMBDA = 0.92  # half-life ~10 trades
 
     def __init__(self, state_path: Path):
         self.state_path = state_path
         self._outcomes: dict[str, list[bool]] = {}
+        self._smoothed: dict[str, float] = {}
         self._retired: set[str] = set()
         self._param_history: dict[str, list[float]] = {}
         self._load()
+        self._migrate_smoothed()
 
     def record(self, source: str, was_correct: bool):
         if source not in self._outcomes:
             self._outcomes[source] = []
+            self._smoothed[source] = 0.5
         self._outcomes[source].append(was_correct)
         window = self._outcomes[source][-self.DECAY_WINDOW:]
         self._outcomes[source] = window
+        prev = self._smoothed[source]
+        self._smoothed[source] = self.DECAY_LAMBDA * prev + (1 - self.DECAY_LAMBDA) * float(was_correct)
         self._prune(source)
         self._save()
 
     def accuracy(self, source: str) -> Optional[float]:
+        val = self._smoothed.get(source)
+        if val is not None:
+            return val
         window = self._window(source)
         if len(window) < self.MIN_PREDICTIONS:
             return None
@@ -54,8 +64,7 @@ class SignalTracker:
         acc = self.accuracy(source)
         if acc is None:
             return 0.5
-        edge = acc - 0.5
-        return max(0.0, (edge * 2) ** 2)
+        return max(0.0, min(1.0, acc))
 
     def retired(self, source: str) -> bool:
         return source in self._retired
@@ -72,11 +81,15 @@ class SignalTracker:
 
     def _prune(self, source: str):
         acc = self.accuracy(source)
-        if acc is not None:
+        n = len(self._outcomes.get(source, []))
+        if acc is None or n < self.MIN_PREDICTIONS:
+            return
+        if source in self._retired:
+            if n >= self.REACTIVATE_MIN_TRADES and acc >= self.REACTIVATE_ACCURACY:
+                self._retired.discard(source)
+        else:
             if acc < self.RETIRE_ACCURACY:
                 self._retired.add(source)
-            elif acc >= self.REACTIVATE_ACCURACY:
-                self._retired.discard(source)
 
     def status(self) -> dict:
         result = {}
@@ -93,6 +106,7 @@ class SignalTracker:
     def _save(self):
         data = {
             "outcomes": {k: v for k, v in self._outcomes.items()},
+            "smoothed": {k: v for k, v in self._smoothed.items()},
             "retired": list(self._retired),
             "param_history": {k: v for k, v in self._param_history.items()},
         }
@@ -107,16 +121,26 @@ class SignalTracker:
         try:
             data = json.loads(self.state_path.read_text())
             self._outcomes = {k: list(v) for k, v in data.get("outcomes", {}).items()}
+            self._smoothed = {k: float(v) for k, v in data.get("smoothed", {}).items()}
             self._retired = set(data.get("retired", []))
             self._param_history = {k: list(v) for k, v in data.get("param_history", {}).items()}
         except (json.JSONDecodeError, KeyError):
             pass
 
+    def _migrate_smoothed(self):
+        for src in self._outcomes:
+            if src not in self._smoothed and self._outcomes[src]:
+                window = self._outcomes[src][-self.DECAY_WINDOW:]
+                self._smoothed[src] = sum(window) / len(window)
+        if self._smoothed:
+            self._save()
+
 
 class WeeklyReflector:
     """Analyzes trade data weekly and generates parameter change suggestions."""
 
-    MIN_TRADES_FOR_ANALYSIS = 20
+    MIN_TRADES_FOR_ANALYSIS = 30
+    MIN_TRADES_FOR_DECAY = 30
 
     def __init__(self, tracker: SignalTracker):
         self.tracker = tracker
@@ -169,7 +193,7 @@ class WeeklyReflector:
         suggestions = []
 
         rsi_trades = [t for t in trades if t.strategy == "mr"]
-        if len(rsi_trades) >= 10:
+        if len(rsi_trades) >= 30:
             rsi_val = params.get("rsi_oversold", 28.0)
             r_pnls = [t.r_multiple for t in rsi_trades]
             good_trades = [t for t in rsi_trades if t.r_multiple > 0.5]
@@ -177,19 +201,55 @@ class WeeklyReflector:
 
             if len(good_trades) < len(bad_trades) and len(bad_trades) >= 5:
                 new_rsi = rsi_val - 2.0
+                p = self._mann_whitney_p(good_trades, bad_trades)
+                confidence = 0.5 if p is not None and p > 0.05 else 0.7
                 suggestions.append(ParameterSuggestion(
                     parameter="strategies.mean_reversion.rsi_oversold",
                     current_value=rsi_val,
                     suggested_value=max(20.0, new_rsi),
-                    reason=f"MR trades underperforming: {len(good_trades)} good vs {len(bad_trades)} bad. Tightening RSI threshold.",
-                    confidence=0.7,
+                    reason=f"MR R-bucket: {len(good_trades)} good vs {len(bad_trades)} bad (p={p:.3f}). Tightening RSI threshold.",
+                    confidence=confidence,
                 ))
 
         return suggestions
 
+    def _mann_whitney_p(self, group_a: list, group_b: list) -> Optional[float]:
+        a_vals = [t.r_multiple for t in group_a]
+        b_vals = [t.r_multiple for t in group_b]
+        if len(a_vals) < 3 or len(b_vals) < 3:
+            return None
+        merged = [(v, 0) for v in a_vals] + [(v, 1) for v in b_vals]
+        merged.sort(key=lambda x: x[0])
+        ranks = {}
+        i = 1
+        n = len(merged)
+        while i <= n:
+            j = i
+            while j <= n and merged[j - 1][0] == merged[i - 1][0]:
+                j += 1
+            avg_rank = (i + j - 1) / 2.0
+            for k in range(i, j + 1):
+                if k <= n:
+                    ranks[k] = avg_rank
+            i = j
+        r1 = sum(ranks[idx + 1] for idx, (_, group) in enumerate(merged) if group == 0)
+        n1, n2 = len(a_vals), len(b_vals)
+        u1 = r1 - n1 * (n1 + 1) / 2.0
+        u = min(u1, n1 * n2 - u1)
+        mu = n1 * n2 / 2.0
+        sigma = math.sqrt(n1 * n2 * (n1 + n2 + 1) / 12.0)
+        if sigma <= 0:
+            return None
+        z = (u - mu) / sigma
+        return 2.0 * (1.0 - self._normal_cdf(abs(z)))
+
+    @staticmethod
+    def _normal_cdf(x: float) -> float:
+        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
     def _detect_decay(self, trades: list[TradeRecord]) -> list[ParameterSuggestion]:
         suggestions = []
-        if len(trades) < 30:
+        if len(trades) < self.MIN_TRADES_FOR_DECAY:
             return suggestions
 
         recent = trades[-15:]
