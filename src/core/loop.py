@@ -22,6 +22,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
+from src.adapters.altfins import AltfinsAdapter
 from src.adapters.hyperliquid import HyperliquidAdapter
 from src.adapters.paper_perp import PaperPerpExchange
 from src.core.perp_risk import PerpRiskManager
@@ -80,6 +81,8 @@ class TradingLoop:
         self._stop_event = asyncio.Event()
         self._suggested_params: list[dict] = []
         self._daily_signals_log: list[dict] = []
+        self._altfins_cycle = 0
+        self._altfins = None
 
     async def start(self):
         self.running = True
@@ -96,6 +99,13 @@ class TradingLoop:
                 loop.add_signal_handler(s, self._stop_event.set)
             except NotImplementedError:
                 pass
+
+        altfins_key = self.config.get("altfins", {}).get("api_key", "") or os.environ.get("ALTFINS_API_KEY", "")
+        if altfins_key:
+            self._altfins = AltfinsAdapter(altfins_key)
+            logger.info("Altfins: enabled")
+        else:
+            logger.info("Altfins: disabled (no API key)")
 
         ws_task = asyncio.create_task(hl.connect_ws())
 
@@ -135,6 +145,19 @@ class TradingLoop:
                     self.candle_cache[asset] = candles
             except Exception as e:
                 logger.debug("fetch candles %s: %s", asset, e)
+
+        # 2b. Altfins signals (every 5 cycles = 5 min to save API credits)
+        self._altfins_cycle += 1
+        if self._altfins and self._altfins_cycle % 5 == 0:
+            try:
+                altfins_signals = await self._altfins.get_all_signals(self.assets)
+                for sig in altfins_signals:
+                    existing = self.signal_cache.get(sig.asset, [])
+                    existing = [s for s in existing if s.source != sig.source]
+                    existing.append(sig)
+                    self.signal_cache[sig.asset] = existing[-20:]
+            except Exception as e:
+                logger.debug("altfins fetch: %s", e)
 
         # 3. Fetch funding + OI
         try:
@@ -193,6 +216,7 @@ class TradingLoop:
 
         funding_rate = hl._latest_funding.get(asset, 0.0)
         oi_vel = self.risk.oi_velocity(asset)
+        altfins_sigs = self.signal_cache.get(asset, [])
 
         if pos and exchange.check_liquidation(asset):
             logger.warning("%s liquidated", asset)
@@ -223,7 +247,8 @@ class TradingLoop:
         # Evaluate entries
         for strat in self.strategies:
             sig_bucket = f"{strat.name()}:{asset}"
-            result = strat.should_enter(asset, candles, [], RegimeType.RANDOM_WALK, pos, funding_rate)
+            all_signals = altfins_sigs + self.signal_cache.get("all", [])
+            result = strat.should_enter(asset, candles, all_signals, RegimeType.RANDOM_WALK, pos, funding_rate)
             if result is None:
                 continue
 
