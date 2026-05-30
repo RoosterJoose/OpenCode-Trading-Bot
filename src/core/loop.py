@@ -403,26 +403,26 @@ class TradingLoop:
         self.risk.record_trade(asset, pnl_pct, pnl_dollars)
         self.signal_tracker.record(pos.signal_source, pnl_pct > 0)
 
-        trade = TradeRecord(
-            asset=asset,
-            side=pos.side,
-            entry_price=pos.entry_price,
-            exit_price=price,
-            size=pos.size,
-            leverage=pos.leverage,
-            pnl_pct=round(pnl_pct, 2),
-            pnl_dollars=round(pnl_dollars, 2),
-            fees=0.0,
-            funding_paid=0.0,
-            exit_reason=reason,
-            strategy=pos.strategy,
-            signal_source=pos.signal_source,
-            entry_confidence=pos.entry_confidence,
-            entry_time=pos.entry_time,
-            exit_time=datetime.now(timezone.utc),
-            r_multiple=round(r_mult, 3),
-        )
-        self.store.save_trade(trade.__dict__)
+        trade = {
+            "asset": asset,
+            "side": pos.side.value,
+            "entry_price": pos.entry_price,
+            "exit_price": price,
+            "size": pos.size,
+            "leverage": pos.leverage,
+            "pnl_pct": round(pnl_pct, 2),
+            "pnl_dollars": round(pnl_dollars, 2),
+            "fees": 0.0,
+            "funding_paid": 0.0,
+            "exit_reason": reason,
+            "strategy": pos.strategy or "",
+            "signal_source": pos.signal_source or "",
+            "entry_confidence": pos.entry_confidence or 0.0,
+            "entry_time": pos.entry_time.isoformat(),
+            "exit_time": datetime.now(timezone.utc).isoformat(),
+            "r_multiple": round(r_mult, 3),
+        }
+        self.store.save_trade(trade)
 
         logger.info(
             "EXIT %s %s price=%.2f pnl=%.1f%% r=%.2f reason=%s",
