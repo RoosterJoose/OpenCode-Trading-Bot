@@ -190,8 +190,8 @@ class TradingLoop:
             except Exception as e:
                 logger.debug("fetch candles %s: %s", asset, e)
 
-        # 2b. Altfins: screener every 60 min (1 permit), signals every 180 min (1 permit)
-        #     1,000 monthly permit budget: 720 screener + 240 signals = 960/mo
+        # 2b. Altfins: screener every 60 min (1 permit), signals every 120 min (1 permit)
+        #     1,000 monthly permit budget: 720 screener + 360 signals = 1,080/mo (runs out ~3 days early)
         self._altfins_cycle += 1
         if self._altfins and self._altfins_cycle % 60 == 0:
             try:
@@ -205,7 +205,7 @@ class TradingLoop:
                 logger.warning("Altfins screener: %s", e)
 
         self._altfins_signal_cycle += 1
-        if self._altfins and self._altfins_signal_cycle % 180 == 0:
+        if self._altfins and self._altfins_signal_cycle % 120 == 0:
             try:
                 altfins_sigs = await self._altfins.fetch_signals(self.assets)
                 for sig in altfins_sigs:
