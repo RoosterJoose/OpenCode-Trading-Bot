@@ -86,7 +86,6 @@ class TradingLoop:
         self._suggested_params: list[dict] = []
         self._daily_signals_log: list[dict] = []
         self._altfins_cycle = 0
-        self._altfins_signal_cycle = 0
         self._altfins = None
 
     def _restore_paper_positions(self, exchange: PaperPerpExchange):
@@ -190,10 +189,9 @@ class TradingLoop:
             except Exception as e:
                 logger.debug("fetch candles %s: %s", asset, e)
 
-        # 2b. Altfins: screener every 60 min (1 permit), signals every 120 min (1 permit)
-        #     1,000 monthly permit budget: 720 screener + 360 signals = 1,080/mo (runs out ~3 days early)
+        # 2b. Altfins: both calls every 90 min (2 permits/cycle = 960/mo within 1,000 budget)
         self._altfins_cycle += 1
-        if self._altfins and self._altfins_cycle % 60 == 0:
+        if self._altfins and self._altfins_cycle % 90 == 0:
             try:
                 indicator_sigs = await self._altfins.fetch_indicators_as_signals(self.assets)
                 for sig in indicator_sigs:
@@ -204,8 +202,6 @@ class TradingLoop:
             except Exception as e:
                 logger.warning("Altfins screener: %s", e)
 
-        self._altfins_signal_cycle += 1
-        if self._altfins and self._altfins_signal_cycle % 120 == 0:
             try:
                 altfins_sigs = await self._altfins.fetch_signals(self.assets)
                 for sig in altfins_sigs:
