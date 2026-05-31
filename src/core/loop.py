@@ -86,6 +86,7 @@ class TradingLoop:
         self._suggested_params: list[dict] = []
         self._daily_signals_log: list[dict] = []
         self._altfins_cycle = 0
+        self._altfins_signal_cycle = 0
         self._altfins = None
 
     def _restore_paper_positions(self, exchange: PaperPerpExchange):
@@ -189,27 +190,34 @@ class TradingLoop:
             except Exception as e:
                 logger.debug("fetch candles %s: %s", asset, e)
 
-        # 2b. Altfins signals (every 60 cycles = 60 min to preserve free-tier quota)
+        # 2b. Altfins: screener every 60 min (1 permit), signals every 180 min (1 permit)
+        #     1,000 monthly permit budget: 720 screener + 240 signals = 960/mo
         self._altfins_cycle += 1
         if self._altfins and self._altfins_cycle % 60 == 0:
             try:
-                altfins_signals = await self._altfins.get_all_signals(self.assets)
-                for sig in altfins_signals:
+                indicator_sigs = await self._altfins.fetch_indicators_as_signals(self.assets)
+                for sig in indicator_sigs:
                     existing = self.signal_cache.get(sig.asset, [])
                     existing = [s for s in existing if s.source != sig.source]
                     existing.append(sig)
                     self.signal_cache[sig.asset] = existing[-20:]
-
-                # Log ensemble scores for visibility
-                ensemble_sigs = [s for s in altfins_signals if s.source == "altfins:ensemble"]
-                for es in ensemble_sigs:
-                    if es.confidence >= 0.5:
-                        logger.info("Altfins: %s %s score=%.2f signals=%d",
-                                     es.asset, es.direction.value.upper(),
-                                     es.confidence,
-                                     es.metadata.get("signal_count", 0))
             except Exception as e:
-                logger.debug("altfins fetch: %s", e)
+                logger.warning("Altfins screener: %s", e)
+
+        self._altfins_signal_cycle += 1
+        if self._altfins and self._altfins_signal_cycle % 180 == 0:
+            try:
+                altfins_sigs = await self._altfins.fetch_signals(self.assets)
+                for sig in altfins_sigs:
+                    existing = self.signal_cache.get(sig.asset, [])
+                    existing = [s for s in existing if s.source != sig.source]
+                    existing.append(sig)
+                    self.signal_cache[sig.asset] = existing[-20:]
+                    logger.info("Altfins signal: %s %s %.2f %s",
+                                 sig.asset, sig.direction.value.upper(),
+                                 sig.confidence, sig.source)
+            except Exception as e:
+                logger.warning("Altfins signals: %s", e)
 
         # 3. Fetch funding + OI
         try:
