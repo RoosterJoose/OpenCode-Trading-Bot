@@ -29,6 +29,9 @@ SYMBOL_MAP = {
     "BTC": "BTC", "ETH": "ETH", "SOL": "SOL", "BNB": "BNB",
     "XRP": "XRP", "DOGE": "DOGE", "ADA": "ADA", "AVAX": "AVAX",
     "LINK": "LINK", "DOT": "DOT",
+    "LTC": "LTC", "NEAR": "NEAR", "ATOM": "ATOM", "UNI": "UNI",
+    "ARB": "ARB", "OP": "OP", "APT": "APT", "SUI": "SUI",
+    "AAVE": "AAVE", "INJ": "INJ",
 }
 
 TREND_MAP = {
