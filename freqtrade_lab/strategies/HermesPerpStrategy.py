@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +12,7 @@ from freqtrade.strategy import IStrategy
 
 SNAPSHOT_PATH = os.environ.get("HERMES_SNAPSHOT", "/hermes-data/external_snapshot.json")
 INTENT_DIR = os.environ.get("HERMES_INTENT_DIR", "/hermes-data/intents")
+EMIT_INTENTS = os.environ.get("HERMES_EMIT_INTENTS", "0") == "1"
 
 
 class HermesPerpStrategy(IStrategy):
@@ -75,15 +76,26 @@ class HermesPerpStrategy(IStrategy):
     trend_funding_boost = 0.1
 
     _ext_snapshot: dict | None = None
+    _ext_snapshot_mtime: float = 0.0
+    snapshot_max_age_sec = 180
 
     def _load_snapshot(self) -> dict | None:
-        if HermesPerpStrategy._ext_snapshot is not None:
-            return HermesPerpStrategy._ext_snapshot
         try:
             p = Path(SNAPSHOT_PATH)
-            if p.exists():
+            if not p.exists():
+                return None
+            mtime = p.stat().st_mtime
+            if HermesPerpStrategy._ext_snapshot is None or mtime > HermesPerpStrategy._ext_snapshot_mtime:
                 HermesPerpStrategy._ext_snapshot = json.loads(p.read_text())
-                return HermesPerpStrategy._ext_snapshot
+                HermesPerpStrategy._ext_snapshot_mtime = mtime
+            snapshot = HermesPerpStrategy._ext_snapshot
+            ts = snapshot.get("timestamp") if isinstance(snapshot, dict) else None
+            if ts:
+                snap_time = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                age = datetime.now(timezone.utc) - snap_time.astimezone(timezone.utc)
+                if age.total_seconds() > self.snapshot_max_age_sec:
+                    return None
+            return snapshot
         except Exception:
             pass
         return None
@@ -192,29 +204,55 @@ class HermesPerpStrategy(IStrategy):
 
         return dataframe
 
-    def confirm_trade_entry(self, pair: str, current_time: datetime, current_rate: float,
-                            proposed_side: str, entry_tag: str | None, **kwargs) -> bool:
-        from pathlib import Path as _Path
-        _Path(INTENT_DIR).mkdir(parents=True, exist_ok=True)
+    def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
+                            time_in_force: str, current_time: datetime,
+                            entry_tag: str | None, side: str, **kwargs) -> bool:
+        if not EMIT_INTENTS:
+            return True
+
+        intent_dir = Path(INTENT_DIR)
+        intent_dir.mkdir(parents=True, exist_ok=True)
         asset = pair.split("/")[0]
-        idempotency_key = f"freqtrade:{asset}:{current_time.strftime('%Y%m%d%H%M')}"
+        tag = entry_tag or "unknown"
+        side_value = "long" if side == "long" else "short"
+        idempotency_key = f"freqtrade:{asset}:{side_value}:{tag}:{current_time.strftime('%Y%m%d%H%M')}"
+
+        confidence = self.confidence_min_entry
+        requested_stop_price = None
+        try:
+            dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+            if not dataframe.empty:
+                row = dataframe.iloc[-1]
+                confidence_col = "trend_confidence" if tag.startswith("trend") else "mr_confidence"
+                confidence = max(confidence, float(row.get(confidence_col, confidence) or confidence))
+                atr_pct = float(row.get("atr_pct", 0) or 0) / 100
+                mult = self.atr_stop_major if pair.startswith(("BTC/", "ETH/")) else self.atr_stop_alt
+                stop_dist = max(self.stop_min_pct / 100, min(atr_pct * mult, self.stop_max_pct / 100))
+                requested_stop_price = rate * (1 - stop_dist) if side_value == "long" else rate * (1 + stop_dist)
+        except Exception:
+            pass
+
+        expires_at = current_time + timedelta(seconds=60)
         intent = {
             "idempotency_key": idempotency_key,
             "created_at": current_time.isoformat(),
             "signal_candle_close": current_time.strftime("%Y-%m-%dT%H:00:00"),
-            "expires_at": f"{current_time.isoformat().split('.')[0]}+00:00",
+            "expires_at": expires_at.isoformat(),
             "source": "freqtrade",
             "strategy": "HermesPerpStrategy",
             "asset": asset,
-            "side": "long" if proposed_side == "long" else "short",
-            "confidence": 0.7,
-            "entry_tag": entry_tag or "",
-            "intended_entry_price": current_rate,
+            "side": side_value,
+            "confidence": confidence,
+            "entry_tag": tag,
+            "intended_entry_price": rate,
+            "requested_stop_price": requested_stop_price,
             "requested_leverage": self.base_leverage,
-            "components": [f"freqtrade:{entry_tag or 'unknown'}"],
+            "components": [f"freqtrade:{tag}"],
         }
-        intent_path = _Path(INTENT_DIR) / f"{idempotency_key}.json"
-        intent_path.write_text(json.dumps(intent, indent=2))
+        intent_path = intent_dir / f"{idempotency_key}.json"
+        tmp_path = intent_path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(intent, indent=2))
+        tmp_path.replace(intent_path)
         return True
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:

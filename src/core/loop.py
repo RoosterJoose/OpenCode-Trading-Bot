@@ -142,18 +142,27 @@ class TradingLoop:
     def _import_file_intents(self):
         intent_dir = self.data_dir / "intents"
         done_dir = intent_dir / "done"
+        invalid_dir = intent_dir / "invalid"
         if not intent_dir.exists():
             return
         done_dir.mkdir(parents=True, exist_ok=True)
+        invalid_dir.mkdir(parents=True, exist_ok=True)
         for f in sorted(intent_dir.glob("*.json")):
             try:
                 raw = f.read_text()
                 data = json.loads(raw)
-                self.store.save_intent(data)
+                saved = self.store.save_intent(data)
                 f.rename(done_dir / f.name)
-                logger.info("Imported intent: %s %s %s",
-                            data.get("asset","?"), data.get("side","?"), data.get("source","?"))
+                if saved:
+                    logger.info("Imported intent: %s %s %s",
+                                data.get("asset", "?"), data.get("side", "?"), data.get("source", "?"))
+                else:
+                    logger.info("Skipped duplicate intent: %s", data.get("idempotency_key", f.name))
             except Exception as e:
+                try:
+                    f.rename(invalid_dir / f.name)
+                except Exception:
+                    pass
                 logger.debug("intent import %s: %s", f.name, e)
 
     async def _cycle(self, hl: HyperliquidAdapter, exchange: PaperPerpExchange):
