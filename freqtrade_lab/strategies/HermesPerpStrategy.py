@@ -206,7 +206,7 @@ class HermesPerpStrategy(IStrategy):
             "source": "freqtrade",
             "strategy": "HermesPerpStrategy",
             "asset": asset,
-            "side": "LONG" if proposed_side == "long" else "SHORT",
+            "side": "long" if proposed_side == "long" else "short",
             "confidence": 0.7,
             "entry_tag": entry_tag or "",
             "intended_entry_price": current_rate,
