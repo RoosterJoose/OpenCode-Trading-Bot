@@ -61,7 +61,7 @@ VALUE_TYPES = [
     "OBV_TREND",
     "VOLUME_RELATIVE",
     "MACD",
-    "MACD_SIGNAL_LINE",
+    "MACD_SIGNAL",
     "MACD_HISTOGRAM",
     "STOCH",
     "STOCH_RSI",
@@ -115,6 +115,8 @@ class AltfinsAdapter:
             json=body,
             headers={"X-API-KEY": self.api_key, "Content-Type": "application/json"},
         )
+        if resp.status_code >= 400:
+            logger.warning("Altfins POST %s: HTTP %d %s", path, resp.status_code, resp.text[:200])
         resp.raise_for_status()
         return resp.json()
 
@@ -124,6 +126,8 @@ class AltfinsAdapter:
             params=params,
             headers={"X-API-KEY": self.api_key},
         )
+        if resp.status_code >= 400:
+            logger.warning("Altfins GET %s: HTTP %d %s", path, resp.status_code, resp.text[:200])
         resp.raise_for_status()
         return resp.json()
 
@@ -143,7 +147,7 @@ class AltfinsAdapter:
             payload = {**body, "page": 0, "size": min(len(alt_symbols), 50)}
             data = await self._post("/screener-data/search-requests", payload)
         except Exception as e:
-            logger.debug("Altfins screener error: %s", e)
+            logger.warning("Altfins screener error: %s", e)
             return self._cached_indicators
 
         results = {}
@@ -194,7 +198,7 @@ class AltfinsAdapter:
             payload = {**body, "page": 0, "size": 50}
             data = await self._post("/signals-feed/search-requests", payload)
         except Exception as e:
-            logger.debug("Altfins signals error: %s", e)
+            logger.warning("Altfins signals error: %s", e)
             return self._cached_signals
 
         if isinstance(data, dict):

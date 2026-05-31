@@ -189,9 +189,9 @@ class TradingLoop:
             except Exception as e:
                 logger.debug("fetch candles %s: %s", asset, e)
 
-        # 2b. Altfins signals (every 5 cycles = 5 min to save API credits)
+        # 2b. Altfins signals (every 60 cycles = 60 min to preserve free-tier quota)
         self._altfins_cycle += 1
-        if self._altfins and self._altfins_cycle % 5 == 0:
+        if self._altfins and self._altfins_cycle % 60 == 0:
             try:
                 altfins_signals = await self._altfins.get_all_signals(self.assets)
                 for sig in altfins_signals:
@@ -248,8 +248,10 @@ class TradingLoop:
                         "timestamp": s.timestamp.isoformat() if s.timestamp else None,
                     })
             altfins_indicators = {}
+            permit_info = {}
             if self._altfins:
                 altfins_indicators = self._altfins._cached_indicators
+                permit_info = await self._altfins.check_permit_usage()
             snapshot = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "funding": dict(exchange._funding_rates),
@@ -261,6 +263,7 @@ class TradingLoop:
                 "altfins_signal_count": len(altfins_signals),
                 "altfins_signals": altfins_signals[:50],
                 "altfins_indicators": altfins_indicators,
+                "altfins_permits": permit_info,
             }
             snapshot_path = self.data_dir / "external_snapshot.json"
             tmp = snapshot_path.with_suffix(".json.tmp")
