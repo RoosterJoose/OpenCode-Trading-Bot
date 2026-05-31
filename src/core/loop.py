@@ -139,9 +139,27 @@ class TradingLoop:
         self.store.close()
         logger.info("Shutdown complete")
 
+    def _import_file_intents(self):
+        intent_dir = self.data_dir / "intents"
+        done_dir = intent_dir / "done"
+        if not intent_dir.exists():
+            return
+        done_dir.mkdir(parents=True, exist_ok=True)
+        for f in sorted(intent_dir.glob("*.json")):
+            try:
+                raw = f.read_text()
+                data = json.loads(raw)
+                self.store.save_intent(data)
+                f.rename(done_dir / f.name)
+                logger.info("Imported intent: %s %s %s",
+                            data.get("asset","?"), data.get("side","?"), data.get("source","?"))
+            except Exception as e:
+                logger.debug("intent import %s: %s", f.name, e)
+
     async def _cycle(self, hl: HyperliquidAdapter, exchange: PaperPerpExchange):
         if self._cycle_count % 5 == 0:
             logger.info("heartbeat cycle=%d", self._cycle_count)
+        self._import_file_intents()
         # 1. Fetch market data
         try:
             mids = await hl.fetch_all_mids()

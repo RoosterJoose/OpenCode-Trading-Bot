@@ -11,6 +11,7 @@ from freqtrade.persistence import Trade
 from freqtrade.strategy import IStrategy
 
 SNAPSHOT_PATH = os.environ.get("HERMES_SNAPSHOT", "/hermes-data/external_snapshot.json")
+INTENT_DIR = os.environ.get("HERMES_INTENT_DIR", "/hermes-data/intents")
 
 
 class HermesPerpStrategy(IStrategy):
@@ -190,6 +191,31 @@ class HermesPerpStrategy(IStrategy):
         dataframe["entry_kind"] = np.where(trend_conf >= mr_conf, "trend", "mr")
 
         return dataframe
+
+    def confirm_trade_entry(self, pair: str, current_time: datetime, current_rate: float,
+                            proposed_side: str, entry_tag: str | None, **kwargs) -> bool:
+        from pathlib import Path as _Path
+        _Path(INTENT_DIR).mkdir(parents=True, exist_ok=True)
+        asset = pair.split("/")[0]
+        idempotency_key = f"freqtrade:{asset}:{current_time.strftime('%Y%m%d%H%M')}"
+        intent = {
+            "idempotency_key": idempotency_key,
+            "created_at": current_time.isoformat(),
+            "signal_candle_close": current_time.strftime("%Y-%m-%dT%H:00:00"),
+            "expires_at": f"{current_time.isoformat().split('.')[0]}+00:00",
+            "source": "freqtrade",
+            "strategy": "HermesPerpStrategy",
+            "asset": asset,
+            "side": "LONG" if proposed_side == "long" else "SHORT",
+            "confidence": 0.7,
+            "entry_tag": entry_tag or "",
+            "intended_entry_price": current_rate,
+            "requested_leverage": self.base_leverage,
+            "components": [f"freqtrade:{entry_tag or 'unknown'}"],
+        }
+        intent_path = _Path(INTENT_DIR) / f"{idempotency_key}.json"
+        intent_path.write_text(json.dumps(intent, indent=2))
+        return True
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         mr_entry = (
