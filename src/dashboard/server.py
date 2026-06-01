@@ -20,6 +20,7 @@ import time
 import urllib.request
 from functools import lru_cache
 from http.server import HTTPServer, SimpleHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from pathlib import Path
 from typing import Any
 
@@ -156,12 +157,16 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         }
         handler = handlers.get(api)
         if handler:
-            handler()
+            try:
+                handler()
+            except Exception as e:
+                logger.error("API %s: %s", api, e)
+                self.send_error(500, str(e))
         else:
             self.send_error(404)
 
     def _connect(self):
-        conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        conn = sqlite3.connect(str(self.db_path), timeout=5.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -373,12 +378,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         pass
 
 
+class ThreadingServer(ThreadingMixIn, HTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 def serve(db_path: Path = Path("data/hermes.db"), port: int = 8081):
     class Handler(DashboardHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, db_path=db_path, **kwargs)
 
-    server = HTTPServer(("0.0.0.0", port), Handler)
+    server = ThreadingServer(("0.0.0.0", port), Handler)
     print(f"Dashboard: http://0.0.0.0:{port}")
     try:
         server.serve_forever()
