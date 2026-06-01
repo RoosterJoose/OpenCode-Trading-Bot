@@ -100,6 +100,7 @@ class TrendFollow(PerpStrategy):
 
         is_long = cross_above or (continuation_long and near_ema)
         cross_type = "bull" if is_long else "bear"
+        confidence = 0.5
         sources = [f"ema_{cross_type}_cross" if (cross_above if is_long else cross_below) else f"{cross_type}_continuation", "adx_confirmed"]
         if regime == RegimeType.STRONGLY_TRENDING:
             confidence += 0.2
