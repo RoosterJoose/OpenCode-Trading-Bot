@@ -129,9 +129,6 @@ class TrendFollow(PerpStrategy):
         if altfins_confirm:
             confidence = min(confidence * 1.2, 0.95)
             sources.append("altfins_validated")
-        else:
-            confidence *= 0.85
-            sources.append("no_altfins_confirm")
 
         if is_long and funding_rate < -0.0005:
             confidence += 0.1
