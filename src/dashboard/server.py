@@ -89,6 +89,7 @@ HTML = """<!DOCTYPE html>
       <div class="card section" id="positions"><div class="head"><h3>Open Positions (<span id="position-count">0</span>) <span class="neutral">ⓘ</span></h3><button class="viewbtn" id="position-filter">View All</button></div><div style="overflow:auto"><table><thead><tr><th>Pair</th><th>Side</th><th>Entry</th><th>Current</th><th>Unrealized PnL</th><th>Stop Loss</th><th>Leverage</th><th>Size</th></tr></thead><tbody id="positions-body"></tbody></table></div></div>
       <div class="card section" id="risk"><div class="head"><h3>Risk Controls <span class="neutral">ⓘ</span></h3></div><div style="display:flex;gap:18px;align-items:center"><div><div class="riskline"><div class="label">Max Daily Drawdown</div><b class="gain" id="drawdown">—</b><div class="bar"><span id="dd-bar" style="width:0%"></span></div></div><div class="riskline"><div class="label">Leverage Usage</div><b id="leverage">—</b><div class="bar"><span id="lev-bar" style="width:0%"></span></div></div></div><div class="ring" id="risk-ring">0%</div></div><div class="riskline"><div class="label">Exposure Limit</div><b id="limit-text">—</b><div class="bar"><span id="limit-bar" style="width:0%"></span></div></div><div class="badge positive">Kill Switch Enabled</div></div>
       <div class="card section ai"><div class="head"><h3>AI Reflection <span class="neutral">ⓘ</span></h3></div><div id="reflection">Loading...</div><button class="ask">Ask Hermes ↗</button></div>
+      <div class="card section"><div class="head"><h3>Daily Market Analysis <span class="neutral">ⓘ</span></h3></div><div id="daily-reflection">Loading...</div></div>
       <div class="card section" id="journal"><div class="head"><h3>Recent Activity <span class="neutral">ⓘ</span></h3><button class="viewbtn" id="activity-filter">View All</button></div><div class="timeline" id="activity"></div></div>
     </section>
     <section class="card section" id="analytics" style="margin-top:14px"><div class="head"><h3>Watchlist / Opportunity Scanner <span class="neutral">ⓘ</span></h3><button class="viewbtn">View All</button></div><div style="overflow:auto"><table><thead><tr><th>#</th><th>Pair</th><th>Price</th><th>RSI (14)</th><th>Trend</th><th>Vol. Spike</th><th>Confidence</th><th>Signal</th></tr></thead><tbody id="watchlist"></tbody></table></div></section>
@@ -107,7 +108,8 @@ function renderPositions(){const tbody=document.getElementById('positions-body')
 function renderWatchlist(){const q=state.query.toUpperCase();const markets=(state.markets.length?state.markets:ASSETS.map(a=>({asset:a,price:0,change_24h:0,volume_24h:0}))).filter(m=>!q||m.asset.includes(q));document.getElementById('watchlist').innerHTML=markets.map((m,i)=>{const n=Number(m.change_24h||0),conf=Math.max(35,Math.min(92,55+n*8)),rsi=Math.max(25,Math.min(78,50+n*4)).toFixed(1),sig=conf>78?'Strong Buy':conf>58?'+ Buy':n<0?'Caution':'Neutral';return '<tr><td>'+(i+1)+'</td><td>'+m.asset+'/USDT</td><td>'+fmtUSD(m.price)+'</td><td>'+rsi+'</td><td class="'+(n>=0?'gain':'loss')+'">'+(n>=0?'↑':'↓')+'</td><td>'+(Number(m.volume_24h||0)>0?'live':'—')+'</td><td><div style="display:flex;gap:8px;align-items:center"><div class="confidence"><span style="width:'+conf+'%"></span></div>'+Math.round(conf)+'</div></td><td><span class="badge '+(sig==='Caution'?'negative':sig==='Neutral'?'neutral':'positive')+'">'+sig+'</span></td></tr>'}).join('')}
 function renderActivity(){const sigs=state.signals.slice(-8).reverse();const acts=[...sigs.map(s=>({t:(s.time||'').slice(11,16),b:'Signal Detected',d:(s.side||'').toUpperCase()+' '+s.asset+' '+(s.strategy||'')+' conf '+Math.round((s.confidence||0)*100)+'%'})),...state.trades.slice(0,4).map(t=>({t:(t.exit_time||'').slice(11,16),b:'Trade Closed',d:t.asset+' '+(Number(t.pnl_pct||0)>=0?'+':'')+Number(t.pnl_pct||0).toFixed(2)+'%'}))];document.getElementById('activity').innerHTML=(acts.length?acts:[{t:'now',b:'System Nominal',d:'Heartbeat, dashboard, and health timer active.'}]).slice(0,6).map(a=>'<div class="event"><small>'+a.t+'</small><div class="pin"></div><div><b>'+a.b+'</b><span class="sub">'+a.d+'</span></div></div>').join('')}
 function renderReflection(){const r=state.reflection;let html='<p><b>Today&#39;s Summary</b></p><p class="sub">Paper mode active. Local TA and Altfins metrics are both feeding entry confidence. Health checks restart the bot if snapshots go stale.</p>';if(r&&r.suggestions&&r.suggestions.length){html+='<p><b>Pending Suggestions</b></p>'+r.suggestions.map(s=>'<p class="sub">'+s.parameter+': '+s.current_value+' → '+s.suggested_value+'</p>').join('')}else html+='<p><b>Key Lesson</b></p><p class="sub">Reflection runs after enough closed paper trades.</p>';document.getElementById('reflection').innerHTML=html}
-async function load(){try{const [status,trades,positions,equity,signals,reflection,markets]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection','/api/markets'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection,markets};renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection()}catch(e){console.error(e)}}
+function renderDailyReflection(){const r=state.dailyReflection;if(!r||!r.assets){document.getElementById('daily-reflection').innerHTML='<p class="sub">Waiting for end-of-day data.</p>';return}const sig=r.significant_moves||0;const miss=r.missed_moves||0;const catchable=r.potentially_catchable||0;let html='<p><b>'+r.date+'</b><span class="sub"> · '+r.bias+'</span></p>';html+='<p class="sub">'+sig+' significant moves · '+miss+' missed · '+catchable+' catchable</p>';if(r.learning&&r.learning.length){r.learning.forEach(l=>{if(l.type==='market_summary')return;html+='<div class="badge '+(l.type==='missed_by_config'?'positive':'neutral')+'">'+l.count+'x '+l.reason+'</div><p class="sub">'+l.action+'</p>'})}html+='<div style="max-height:200px;overflow:auto;margin-top:8px">'+r.assets.filter(a=>a.significant).slice(0,10).map(a=>'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border)"><span>'+a.asset+'</span><span class="'+(a.change_24h_pct>=0?'gain':'loss')+'">'+pct(a.change_24h_pct)+'</span></div>').join('')+'</div>';document.getElementById('daily-reflection').innerHTML=html}
+async function load(){try{const [status,trades,positions,equity,signals,reflection,markets,dailyReflection]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection','/api/markets','/api/daily-reflection'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection,markets,dailyReflection};renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection();renderDailyReflection()}catch(e){console.error(e)}}
 document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-range]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.range=b.dataset.range;renderKpis()});document.getElementById('search').addEventListener('input',e=>{state.query=e.target.value;renderWatchlist()});window.addEventListener('resize',()=>renderKpis());load();setInterval(load,60000);
 </script>
 </body>
@@ -144,7 +146,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def _handle_api(self):
         api = self.path.split("?")[0]
-        handlers = {
+        handler = {
             "/api/status": self._api_status,
             "/api/trades": self._api_trades,
             "/api/positions": self._api_positions,
@@ -152,10 +154,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             "/api/markets": self._api_markets,
             "/api/signals": self._api_signals,
             "/api/reflection": self._api_reflection,
+            "/api/daily-reflection": self._api_daily_reflection,
             "/api/readiness": self._api_readiness,
             "/api/intents": self._api_intents,
-        }
-        handler = handlers.get(api)
+        }.get(api)
         if handler:
             try:
                 handler()
@@ -302,6 +304,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._send_json(json.loads(state["value"]))
             else:
                 self._send_json({})
+        except Exception:
+            self._send_json({})
+        finally:
+            conn.close()
+
+    def _api_daily_reflection(self):
+        conn = self._connect()
+        try:
+            state = conn.execute("SELECT value FROM state WHERE key = 'daily_reflection'").fetchone()
+            if state:
+                self._send_json(json.loads(state["value"]))
+            else:
+                self._send_json({"date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "assets": [], "learning": []})
         except Exception:
             self._send_json({})
         finally:
