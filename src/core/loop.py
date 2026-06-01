@@ -549,7 +549,8 @@ class TradingLoop:
         )
         return True, "accepted"
 
-    def _infer_regime(self, candles: list[PerpCandle]) -> RegimeType:
+    @staticmethod
+    def _infer_regime(candles: list[PerpCandle]) -> RegimeType:
         if len(candles) < 100:
             return RegimeType.RANDOM_WALK
 
@@ -570,15 +571,15 @@ class TradingLoop:
             return RegimeType.DEAD_MARKET
 
         # ADX as primary trend strength signal (overrides Hurst when strong)
-        adx_val = self._adx(candles)
+        adx_val = TradingLoop._adx(candles)
         if adx_val > 50:
             return RegimeType.STRONGLY_TRENDING
         if adx_val > 30:
             return RegimeType.TRENDING
 
         # Joint classification: Hurst (memory) + Efficiency Ratio (direction/noise)
-        h = self._hurst(closes)
-        er = self._efficiency_ratio(closes)
+        h = TradingLoop._hurst(closes)
+        er = TradingLoop._efficiency_ratio(closes)
 
         if h > 0.55 and er > 0.60:
             return RegimeType.STRONGLY_TRENDING
