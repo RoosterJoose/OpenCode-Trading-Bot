@@ -83,11 +83,13 @@ class TrendFollow(PerpStrategy):
             return None
 
         cross_above = prev_fast <= prev_slow and ema_fast > ema_slow
-        continuation = ema_fast > ema_slow and last.close > ema_fast
-        # Avoid chasing extended candles: continuation entries must be near the fast EMA.
-        near_fast_ema = ((last.close - ema_fast) / ema_fast) <= 0.012 if ema_fast else False
-        if not cross_above and not (continuation and near_fast_ema):
-            return None
+        cross_below = prev_fast >= prev_slow and ema_fast < ema_slow
+        continuation_long = ema_fast > ema_slow and last.close > ema_fast
+        continuation_short = ema_fast < ema_slow and last.close < ema_fast
+        near_ema = abs(last.close - ema_fast) / ema_fast <= 0.04 if ema_fast else False
+        if not cross_above and not (continuation_long and near_ema):
+            if not cross_below and not (continuation_short and near_ema):
+                return None
 
         adx = self._adx(candles)
         if adx is None or adx < self.adx_threshold:
@@ -96,27 +98,33 @@ class TrendFollow(PerpStrategy):
         atr = self._atr(candles)
         entry_price = last.close
 
-        confidence = 0.5
-        sources = ["ema_cross" if cross_above else "trend_continuation", "adx_confirmed"]
+        is_long = cross_above or (continuation_long and near_ema)
+        cross_type = "bull" if is_long else "bear"
+        sources = [f"ema_{cross_type}_cross" if (cross_above if is_long else cross_below) else f"{cross_type}_continuation", "adx_confirmed"]
         if regime == RegimeType.STRONGLY_TRENDING:
             confidence += 0.2
             sources.append("strong_trend")
 
-        component_sources = ["local:ema_cross" if cross_above else "local:trend_continuation", "local:adx_confirmed"]
+        component_sources = [f"local:ema_{cross_type}_cross" if (cross_above if is_long else cross_below) else f"local:{cross_type}_continuation", "local:adx_confirmed"]
 
-        # Altfins signal validation — external signals validate regime, not additive boost
+        # Altfins signal validation
         altfins_confirm = False
         for s in signals:
-            if s.asset != asset or s.direction != Side.LONG:
+            if s.asset != asset:
+                continue
+            if is_long and s.direction != Side.LONG:
+                continue
+            if not is_long and s.direction != Side.SHORT:
                 continue
             if s.source.startswith("altfins:"):
                 source_l = s.source.lower()
-                if any(kw in source_l for kw in ("momentum", "breakout", "uptrend", "cross", "trend", "channel_up")):
+                if any(kw in source_l for kw in ("momentum", "breakout", "uptrend", "downtrend", "cross", "trend", "channel_up", "channel_down")):
                     sig_weight = self.signal_tracker.weight(s.source) if self.signal_tracker else 0.5
                     if sig_weight > 0:
                         altfins_confirm = True
                         component_sources.append(s.source)
                         sources.append(s.source.replace("altfins:", "") + f"_{sig_weight:.2f}")
+
         if altfins_confirm:
             confidence = min(confidence * 1.2, 0.95)
             sources.append("altfins_validated")
@@ -124,18 +132,24 @@ class TrendFollow(PerpStrategy):
             confidence *= 0.85
             sources.append("no_altfins_confirm")
 
-        if funding_rate < -0.0005:
+        if is_long and funding_rate < -0.0005:
+            confidence += 0.1
+            sources.append("funding_tailwind")
+        elif not is_long and funding_rate > 0.0005:
             confidence += 0.1
             sources.append("funding_tailwind")
 
         confidence = min(confidence, 1.0)
 
-        return Side.LONG, confidence, {
+        side = Side.LONG if is_long else Side.SHORT
+
+        return side, confidence, {
             "entry_price": entry_price,
             "fast_ema": round(ema_fast, 2),
             "slow_ema": round(ema_slow, 2),
             "adx": round(adx, 2) if adx is not None else None,
             "atr": round(atr, 4),
+            "side": side.value,
             "sources": sources,
             "component_sources": component_sources,
         }
@@ -148,34 +162,55 @@ class TrendFollow(PerpStrategy):
         candles: list[PerpCandle],
         funding_rate: float,
     ) -> Optional[tuple[str, Optional[float]]]:
-        if current_price <= (position.stop_loss or 0):
-            return "stop_loss", current_price
+        is_short = position.side == Side.SHORT
+        sl = position.stop_loss or 0
+        if is_short:
+            if current_price >= sl:
+                return "stop_loss", current_price
+        else:
+            if current_price <= sl:
+                return "stop_loss", current_price
 
         atr = self._atr(candles)
         if atr <= 0:
             return None
 
-        # Chandelier exit (primary trailing method)
         atr_dist = atr * self.atr_chandelier_mult
         min_dist = 0.015 * current_price
         max_dist = 0.04 * current_price
         stop_dist = max(min_dist, min(max_dist, atr_dist))
-        chandelier = max(c.high for c in candles[-self.atr_period:]) - stop_dist
+
+        if is_short:
+            chandelier = min(c.low for c in candles[-self.atr_period:]) + stop_dist
+        else:
+            chandelier = max(c.high for c in candles[-self.atr_period:]) - stop_dist
 
         # Switch to PSAR after position has been open > N hours
         age_hours = (datetime.now(timezone.utc) - position.entry_time).total_seconds() / 3600
         if age_hours > self.psar_switch_hours:
             psar = self._psar(candles)
-            if psar is not None and current_price <= psar:
-                return "psar", current_price
+            if psar is not None:
+                if is_short and current_price >= psar:
+                    return "psar", current_price
+                elif not is_short and current_price <= psar:
+                    return "psar", current_price
 
-        if current_price <= chandelier:
-            return "chandelier", current_price
+        if is_short:
+            if current_price >= chandelier:
+                return "chandelier", current_price
+        else:
+            if current_price <= chandelier:
+                return "chandelier", current_price
 
         fast = self._ema(candles, self.fast_period)
         slow = self._ema(candles, self.slow_period)
-        if fast is not None and slow is not None and fast < slow:
-            return "ema_death_cross", current_price
+        if fast is not None and slow is not None:
+            if is_short:
+                if fast > slow:
+                    return "ema_golden_cross", current_price
+            else:
+                if fast < slow:
+                    return "ema_death_cross", current_price
 
         if funding_rate > 0.003:
             return "funding_drag", current_price

@@ -397,7 +397,10 @@ class TradingLoop:
             if qty <= 0:
                 continue
 
-            stop_price = entry_price * (1 - stop_pct / 100)
+            if side == Side.SHORT:
+                stop_price = entry_price * (1 + stop_pct / 100)
+            else:
+                stop_price = entry_price * (1 - stop_pct / 100)
 
             # Journal the signal
             signal_entry = {
@@ -566,6 +569,13 @@ class TradingLoop:
         if norm_vol < 0.0015:
             return RegimeType.DEAD_MARKET
 
+        # ADX as primary trend strength signal (overrides Hurst when strong)
+        adx_val = self._adx(candles)
+        if adx_val > 50:
+            return RegimeType.STRONGLY_TRENDING
+        if adx_val > 30:
+            return RegimeType.TRENDING
+
         # Joint classification: Hurst (memory) + Efficiency Ratio (direction/noise)
         h = self._hurst(closes)
         er = self._efficiency_ratio(closes)
@@ -618,6 +628,26 @@ class TradingLoop:
             return 0.5
         slope = (n_pts * sum_xy - sum_x * sum_y) / denom
         return slope / 2
+
+    @staticmethod
+    def _adx(candles: list[PerpCandle], period: int = 14) -> float:
+        if len(candles) < period * 2 + 5:
+            return 0.0
+        tr_vals, plus_dm, minus_dm = [], [], []
+        for i in range(-period * 2 + 1, 0):
+            h, l, pc, ph, pl = candles[i].high, candles[i].low, candles[i-1].close, candles[i-1].high, candles[i-1].low
+            tr_vals.append(max(h - l, abs(h - pc), abs(l - pc)))
+            up_move = h - ph
+            down_move = pl - l
+            plus_dm.append(up_move if up_move > down_move and up_move > 0 else 0.0)
+            minus_dm.append(down_move if down_move > up_move and down_move > 0 else 0.0)
+        atr = sum(tr_vals[-period:]) / period
+        if atr <= 0:
+            return 0.0
+        pdi = sum(plus_dm[-period:]) / period / atr * 100
+        ndi = sum(minus_dm[-period:]) / period / atr * 100
+        dx = abs(pdi - ndi) / (pdi + ndi) * 100 if (pdi + ndi) > 0 else 0.0
+        return dx
 
     async def _close(
         self,

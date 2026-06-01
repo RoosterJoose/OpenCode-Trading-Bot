@@ -71,8 +71,10 @@ class MeanReversion(PerpStrategy):
 
         rsi = self._rsi(candles)
         is_oversold = rsi is not None and rsi <= self.rsi_oversold
-        if not is_oversold:
+        is_overbought = rsi is not None and rsi >= (100 - self.rsi_oversold)
+        if not is_oversold and not is_overbought:
             return None
+        is_long = is_oversold
 
         entry_price = last.close
         atr_value = self._atr(candles)
@@ -86,28 +88,53 @@ class MeanReversion(PerpStrategy):
         from src.core.perp_risk import PerpRiskManager
         stop_min, stop_max = 1.5, 4.0
         stop_pct = max(stop_min / 100, min(stop_pct, stop_max / 100))
-        stop = entry_price * (1 - stop_pct)
+        if is_long:
+            stop = entry_price * (1 - stop_pct)
+            risk_r = (entry_price - stop) / entry_price
+            tp1 = entry_price + (risk_r * self.tp1_r_mult * entry_price)
+            tp2 = entry_price + (risk_r * self.tp2_r_mult * entry_price)
+            tp3 = entry_price + (risk_r * self.tp3_r_mult * entry_price)
+        else:
+            stop = entry_price * (1 + stop_pct)
+            risk_r = (stop - entry_price) / entry_price
+            tp1 = entry_price - (risk_r * self.tp1_r_mult * entry_price)
+            tp2 = entry_price - (risk_r * self.tp2_r_mult * entry_price)
+            tp3 = entry_price - (risk_r * self.tp3_r_mult * entry_price)
 
-        risk_r = (entry_price - stop) / entry_price
         if risk_r <= 0:
             return None
 
         confidence = 0.5
-        sources = ["rsi_oversold"]
-        if rsi is not None and rsi <= 20:
-            confidence += 0.2
-            sources.append("deep_oversold")
+        tag = "rsi_oversold" if is_long else "rsi_overbought"
+        sources = [tag]
+        if rsi is not None:
+            if is_long and rsi <= 20:
+                confidence += 0.2
+                sources.append("deep_oversold")
+            elif not is_long and rsi >= 80:
+                confidence += 0.2
+                sources.append("deep_overbought")
 
-        component_sources = ["local:rsi_oversold"]
+        component_sources = [f"local:{tag}"]
 
-        # Altfins signal validation — external signals validate direction, not additive boost
+        # Altfins signal validation
         altfins_confirm = False
         for s in signals:
-            if s.asset != asset or s.direction != Side.LONG:
+            if s.asset != asset:
+                continue
+            if is_long and s.direction != Side.LONG:
+                continue
+            if not is_long and s.direction != Side.SHORT:
                 continue
             if s.source.startswith("altfins:"):
                 source_l = s.source.lower()
-                if "oversold" in source_l or "pullback" in source_l or "bollinger_touch_lower" in source_l:
+                if is_long and any(kw in source_l for kw in ("oversold", "pullback", "bollinger_touch_lower")):
+                    sig_weight = self.signal_tracker.weight(s.source) if self.signal_tracker else 0.5
+                    if sig_weight > 0:
+                        altfins_confirm = True
+                        component_sources.append(s.source)
+                        sources.append(s.source.replace("altfins:", "") + f"_{sig_weight:.2f}")
+                elif not is_long and any(kw in source_l for kw in ("overbought", "bollinger_touch_upper", "resistance", "exhaustion")):
                     sig_weight = self.signal_tracker.weight(s.source) if self.signal_tracker else 0.5
                     if sig_weight > 0:
                         altfins_confirm = True
@@ -120,7 +147,10 @@ class MeanReversion(PerpStrategy):
             confidence *= 0.85
             sources.append("no_altfins_confirm")
 
-        if funding_rate < -self.funding_threshold:
+        if is_long and funding_rate < -self.funding_threshold:
+            confidence += 0.15
+            sources.append("funding_support")
+        elif not is_long and funding_rate > self.funding_threshold:
             confidence += 0.15
             sources.append("funding_support")
 
@@ -130,7 +160,9 @@ class MeanReversion(PerpStrategy):
 
         confidence = min(confidence, 1.0)
 
-        return Side.LONG, confidence, {
+        side = Side.LONG if is_long else Side.SHORT
+
+        return side, confidence, {
             "entry_price": entry_price,
             "stop_loss": stop,
             "risk_r": round(risk_r, 4),
@@ -138,9 +170,7 @@ class MeanReversion(PerpStrategy):
             "atr_pct": round(stop_pct * 100, 2),
             "sources": sources,
             "component_sources": component_sources,
-            "tp1": entry_price + (risk_r * self.tp1_r_mult * entry_price),
-            "tp2": entry_price + (risk_r * self.tp2_r_mult * entry_price),
-            "tp3": entry_price + (risk_r * self.tp3_r_mult * entry_price),
+        "tp1": tp1, "tp2": tp2, "tp3": tp3,
         }
 
     def should_exit(
@@ -151,14 +181,23 @@ class MeanReversion(PerpStrategy):
         candles: list[PerpCandle],
         funding_rate: float,
     ) -> Optional[tuple[str, Optional[float]]]:
-        if position.stop_loss and current_price <= position.stop_loss:
-            return "stop_loss", current_price
+        is_short = position.side == Side.SHORT
+        sl = position.stop_loss or 0
+        if sl > 0:
+            if is_short and current_price >= sl:
+                return "stop_loss", current_price
+            elif not is_short and current_price <= sl:
+                return "stop_loss", current_price
 
         entry = position.entry_price
         if entry <= 0:
             return None
 
-        r_mult = (current_price - entry) / max(entry - (position.stop_loss or 0), 0.001)
+        stop_dist = abs(entry - sl) if sl > 0 else entry * 0.02
+        if is_short:
+            r_mult = (entry - current_price) / max(stop_dist, 0.001)
+        else:
+            r_mult = (current_price - entry) / max(stop_dist, 0.001)
 
         if r_mult >= self.tp3_r_mult:
             return "tp3", current_price
