@@ -347,6 +347,111 @@ def main(db_path: str):
     except Exception:
         pass
 
+    # ── Cumulative learnings aggregation ─────────────────────────────
+    try:
+        # Load all historical daily reflections
+        rows = conn.execute("SELECT key, value FROM state WHERE key LIKE 'daily_reflection_%' AND key != ?",
+                            (f"daily_reflection_{report_date}",)).fetchall()
+        histories = []
+        for k, v in rows:
+            try:
+                histories.append(json.loads(v))
+            except Exception:
+                pass
+
+        all_learnings = []
+        seen_dates = set()
+        for h in histories + [daily_report]:
+            d = h.get("date")
+            if d and d not in seen_dates:
+                seen_dates.add(d)
+                all_learnings.append(h)
+
+        # Count missed-move reasons across all history
+        reason_counter: dict[str, int] = defaultdict(int)
+        asset_move_counter: dict[str, int] = defaultdict(int)
+        asset_bull_counter: dict[str, int] = defaultdict(int)
+        asset_bear_counter: dict[str, int] = defaultdict(int)
+        bias_history = []
+
+        for rep in all_learnings:
+            bias_history.append({"date": rep.get("date"), "bias": rep.get("bias")})
+            for a in rep.get("assets", []):
+                asset_move_counter[a["asset"]] += 1
+                if a["change_24h_pct"] > 0:
+                    asset_bull_counter[a["asset"]] += 1
+                elif a["change_24h_pct"] < 0:
+                    asset_bear_counter[a["asset"]] += 1
+
+        # Count missed-move reasons
+        for rep in all_learnings:
+            for l in rep.get("learning", []):
+                if l["type"] != "market_summary" and l.get("reason"):
+                    reason_counter[l["reason"]] += l.get("count", 1)
+
+        # Find top consistent losers (most bear days)
+        top_bear = sorted(asset_bear_counter.items(), key=lambda x: -x[1])[:5]
+        top_bull = sorted(asset_bull_counter.items(), key=lambda x: -x[1])[:5]
+
+        cumulative = {
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+            "total_days": len(all_learnings),
+            "bias_history": bias_history,
+            "persistent_missed_reasons": [
+                {"reason": r, "count": c}
+                for r, c in sorted(reason_counter.items(), key=lambda x: -x[1])[:10]
+            ],
+            "most_frequently_bearish": [{"asset": a, "days": c} for a, c in top_bear],
+            "most_frequently_bullish": [{"asset": a, "days": c} for a, c in top_bull],
+            "lessons": [],
+        }
+
+        # Generate persistent lessons from patterns
+        if reason_counter:
+            top_reason = max(reason_counter.items(), key=lambda x: x[1])
+            if top_reason[1] >= 2:
+                cumulative["lessons"].append(
+                    f"{top_reason[0]}: blocked {top_reason[1]}x across {len(all_learnings)} days. "
+                    "Consistent pattern — consider whether this gate is too restrictive."
+                )
+
+        if bias_history:
+            biased_days = [b for b in bias_history if b["bias"] in ("bullish_dominant", "bearish_dominant")]
+            mixed_days = [b for b in bias_history if b["bias"] == "mixed"]
+            if len(biased_days) > len(mixed_days):
+                dominant_bias = max(set(b["bias"] for b in biased_days), key=lambda x: sum(1 for b in biased_days if b["bias"] == x))
+                cumulative["lessons"].append(
+                    f"Market bias dominant direction: {dominant_bias} on {len(biased_days)}/{len(bias_history)} days. "
+                    "Consider weighting strategy allocation toward dominant regime."
+                )
+            elif len(mixed_days) > len(biased_days) and len(bias_history) >= 3:
+                cumulative["lessons"].append(
+                    f"Market has been mixed {len(mixed_days)}/{len(bias_history)} days. "
+                    "No clear directional bias — mean reversion may outperform trends."
+                )
+
+        conn.execute("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)",
+                     ("cumulative_learnings", json.dumps(cumulative, default=str)))
+
+        # Individual asset learning records
+        asset_lessons = {}
+        for rep in all_learnings:
+            for a in rep.get("assets", []):
+                asset_name = a["asset"]
+                if asset_name not in asset_lessons:
+                    asset_lessons[asset_name] = []
+                asset_lessons[asset_name].append({
+                    "date": rep.get("date"),
+                    "change_pct": a["change_24h_pct"],
+                    "rsi": a["rsi"],
+                    "had_signal": a["had_signal"],
+                })
+
+        conn.execute("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)",
+                     ("asset_learnings", json.dumps(asset_lessons, default=str)))
+    except Exception as e:
+        print(f"Cumulative learning error: {e}", file=sys.stderr)
+
     conn.commit()
     conn.close()
 

@@ -90,13 +90,14 @@ HTML = """<!DOCTYPE html>
       <div class="card section" id="risk"><div class="head"><h3>Risk Controls <span class="neutral">ⓘ</span></h3></div><div style="display:flex;gap:18px;align-items:center"><div><div class="riskline"><div class="label">Max Daily Drawdown</div><b class="gain" id="drawdown">—</b><div class="bar"><span id="dd-bar" style="width:0%"></span></div></div><div class="riskline"><div class="label">Leverage Usage</div><b id="leverage">—</b><div class="bar"><span id="lev-bar" style="width:0%"></span></div></div></div><div class="ring" id="risk-ring">0%</div></div><div class="riskline"><div class="label">Exposure Limit</div><b id="limit-text">—</b><div class="bar"><span id="limit-bar" style="width:0%"></span></div></div><div class="badge positive">Kill Switch Enabled</div></div>
       <div class="card section ai"><div class="head"><h3>AI Reflection <span class="neutral">ⓘ</span></h3></div><div id="reflection">Loading...</div><button class="ask">Ask Hermes ↗</button></div>
       <div class="card section"><div class="head"><h3>Daily Market Analysis <span class="neutral">ⓘ</span></h3></div><div id="daily-reflection">Loading...</div></div>
+      <div class="card section"><div class="head"><h3>Accumulated Learnings <span class="neutral">ⓘ</span></h3></div><div id="learnings">Loading...</div></div>
       <div class="card section" id="journal"><div class="head"><h3>Recent Activity <span class="neutral">ⓘ</span></h3><button class="viewbtn" id="activity-filter">View All</button></div><div class="timeline" id="activity"></div></div>
     </section>
     <section class="card section" id="analytics" style="margin-top:14px"><div class="head"><h3>Watchlist / Opportunity Scanner <span class="neutral">ⓘ</span></h3><button class="viewbtn">View All</button></div><div style="overflow:auto"><table><thead><tr><th>#</th><th>Pair</th><th>Price</th><th>RSI (14)</th><th>Trend</th><th>Vol. Spike</th><th>Confidence</th><th>Signal</th></tr></thead><tbody id="watchlist"></tbody></table></div></section>
   </main>
 </div>
 <script>
-const ASSETS=['BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','LINK','DOT','LTC','NEAR','ATOM','UNI','ARB','OP','APT','SUI','AAVE','INJ'];let state={status:{},trades:[],positions:[],equity:[],signals:[],reflection:{},markets:[],range:'1M',query:''};
+const ASSETS=['BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','LINK','DOT','LTC','NEAR','ATOM','UNI','ARB','OP','APT','SUI','AAVE','INJ'];let state={status:{},trades:[],positions:[],equity:[],signals:[],reflection:{},markets:[],range:'1M',query:'',learnings:{}};
 const fmtUSD=n=>'$'+Number(n||0).toLocaleString(undefined,{maximumFractionDigits:2});const pct=n=>(Number(n||0)>=0?'+':'')+Number(n||0).toFixed(2)+'%';const cls=n=>Number(n||0)>=0?'positive':'negative';
 function now(){const d=new Date();document.getElementById('today').textContent=d.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'});document.getElementById('clock').textContent=d.toISOString().slice(11,19)}setInterval(now,1000);now();
 function drawLine(id, pts, color='#1d9bff', fill=true){const c=document.getElementById(id);if(!c)return;const r=c.getBoundingClientRect();c.width=Math.max(40,r.width*devicePixelRatio);c.height=Math.max(28,r.height*devicePixelRatio);const x=c.getContext('2d');x.scale(devicePixelRatio,devicePixelRatio);const w=r.width,h=r.height;x.clearRect(0,0,w,h);if(!pts||pts.length<2){pts=[0,1,0.6,1.4,1.2,1.8]}const min=Math.min(...pts),max=Math.max(...pts),rng=max-min||1;x.beginPath();pts.forEach((p,i)=>{const xx=i/(pts.length-1)*w;const yy=h-8-((p-min)/rng)*(h-16);i?x.lineTo(xx,yy):x.moveTo(xx,yy)});x.strokeStyle=color;x.lineWidth=2;x.stroke();if(fill){x.lineTo(w,h);x.lineTo(0,h);x.closePath();const g=x.createLinearGradient(0,0,0,h);g.addColorStop(0,color+'55');g.addColorStop(1,color+'00');x.fillStyle=g;x.fill()}}
@@ -109,7 +110,8 @@ function renderWatchlist(){const q=state.query.toUpperCase();const markets=(stat
 function renderActivity(){const sigs=state.signals.slice(-8).reverse();const acts=[...sigs.map(s=>({t:(s.time||'').slice(11,16),b:'Signal Detected',d:(s.side||'').toUpperCase()+' '+s.asset+' '+(s.strategy||'')+' conf '+Math.round((s.confidence||0)*100)+'%'})),...state.trades.slice(0,4).map(t=>({t:(t.exit_time||'').slice(11,16),b:'Trade Closed',d:t.asset+' '+(Number(t.pnl_pct||0)>=0?'+':'')+Number(t.pnl_pct||0).toFixed(2)+'%'}))];document.getElementById('activity').innerHTML=(acts.length?acts:[{t:'now',b:'System Nominal',d:'Heartbeat, dashboard, and health timer active.'}]).slice(0,6).map(a=>'<div class="event"><small>'+a.t+'</small><div class="pin"></div><div><b>'+a.b+'</b><span class="sub">'+a.d+'</span></div></div>').join('')}
 function renderReflection(){const r=state.reflection;let html='<p><b>Today&#39;s Summary</b></p><p class="sub">Paper mode active. Local TA and Altfins metrics are both feeding entry confidence. Health checks restart the bot if snapshots go stale.</p>';if(r&&r.suggestions&&r.suggestions.length){html+='<p><b>Pending Suggestions</b></p>'+r.suggestions.map(s=>'<p class="sub">'+s.parameter+': '+s.current_value+' → '+s.suggested_value+'</p>').join('')}else html+='<p><b>Key Lesson</b></p><p class="sub">Reflection runs after enough closed paper trades.</p>';document.getElementById('reflection').innerHTML=html}
 function renderDailyReflection(){const r=state.dailyReflection;if(!r||!r.assets){document.getElementById('daily-reflection').innerHTML='<p class="sub">Waiting for end-of-day data.</p>';return}const sig=r.significant_moves||0;const miss=r.missed_moves||0;const catchable=r.potentially_catchable||0;let html='<p><b>'+r.date+'</b><span class="sub"> · '+r.bias+'</span></p>';html+='<p class="sub">'+sig+' significant moves · '+miss+' missed · '+catchable+' catchable</p>';if(r.learning&&r.learning.length){r.learning.forEach(l=>{if(l.type==='market_summary')return;html+='<div class="badge '+(l.type==='missed_by_config'?'positive':'neutral')+'">'+l.count+'x '+l.reason+'</div><p class="sub">'+l.action+'</p>'})}html+='<div style="max-height:200px;overflow:auto;margin-top:8px">'+r.assets.filter(a=>a.significant).slice(0,10).map(a=>'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border)"><span>'+a.asset+'</span><span class="'+(a.change_24h_pct>=0?'gain':'loss')+'">'+pct(a.change_24h_pct)+'</span></div>').join('')+'</div>';document.getElementById('daily-reflection').innerHTML=html}
-async function load(){try{const [status,trades,positions,equity,signals,reflection,markets,dailyReflection]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection','/api/markets','/api/daily-reflection'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection,markets,dailyReflection};renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection();renderDailyReflection()}catch(e){console.error(e)}}
+function renderLearnings(){const c=state.learnings&&state.learnings.cumulative;if(!c||!c.total_days){document.getElementById('learnings').innerHTML='<p class="sub">Learning accumulation starts after multiple days of data.</p>';return}let html='<p><b>'+c.total_days+' days tracked</b><span class="sub"> · last update '+c.last_updated.slice(0,10)+'</span></p>';if(c.lessons&&c.lessons.length){html+=c.lessons.map(l=>'<div class="badge neutral">Lesson</div><p class="sub">'+l+'</p>').join('')}if(c.persistent_missed_reasons&&c.persistent_missed_reasons.length){html+='<p><b>Persistent Patterns</b></p>'+c.persistent_missed_reasons.slice(0,5).map(r=>'<p class="sub">'+r.reason+': '+r.count+'x</p>').join('')}if(c.most_frequently_bearish&&c.most_frequently_bearish.length){html+='<p><b>Most Bearish Assets</b> <span class="sub">('+c.most_frequently_bearish[0].days+' days)</span></p><div style="display:flex;flex-wrap:wrap;gap:8px">'+c.most_frequently_bearish.slice(0,6).map(a=>'<span class="badge negative">'+a.asset+'</span>').join('')+'</div>'}document.getElementById('learnings').innerHTML=html}
+async function load(){try{const [status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection','/api/markets','/api/daily-reflection','/api/learnings'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings};renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection();renderDailyReflection();renderLearnings()}catch(e){console.error(e)}}
 document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-range]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.range=b.dataset.range;renderKpis()});document.getElementById('search').addEventListener('input',e=>{state.query=e.target.value;renderWatchlist()});window.addEventListener('resize',()=>renderKpis());load();setInterval(load,60000);
 </script>
 </body>
@@ -155,6 +157,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             "/api/signals": self._api_signals,
             "/api/reflection": self._api_reflection,
             "/api/daily-reflection": self._api_daily_reflection,
+            "/api/learnings": self._api_learnings,
             "/api/readiness": self._api_readiness,
             "/api/intents": self._api_intents,
         }.get(api)
@@ -317,6 +320,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._send_json(json.loads(state["value"]))
             else:
                 self._send_json({"date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "assets": [], "learning": []})
+        except Exception:
+            self._send_json({})
+        finally:
+            conn.close()
+
+    def _api_learnings(self):
+        conn = self._connect()
+        try:
+            cumulative = conn.execute("SELECT value FROM state WHERE key = 'cumulative_learnings'").fetchone()
+            asset_learnings = conn.execute("SELECT value FROM state WHERE key = 'asset_learnings'").fetchone()
+            result = {
+                "cumulative": json.loads(cumulative["value"]) if cumulative else {},
+                "asset_learnings": json.loads(asset_learnings["value"]) if asset_learnings else {},
+            }
+            self._send_json(result)
         except Exception:
             self._send_json({})
         finally:
