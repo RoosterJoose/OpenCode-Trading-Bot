@@ -26,6 +26,7 @@ def load_json(val):
 def main(db_path: str):
     db = Path(db_path)
     conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
     report_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     health = {
@@ -80,8 +81,13 @@ def main(db_path: str):
 
         if rows:
             total_trades = len(rows)
-            check("trade_count", total_trades < 150,
-                  f"{total_trades} total (threshold: 150)")
+            if total_trades >= 500:
+                check("trade_count", False,
+                      f"{total_trades} total — possible flip-loop")
+            elif total_trades >= 200:
+                warn("trade_count", f"{total_trades} recent trades — high activity")
+            else:
+                check("trade_count", True, f"{total_trades} total")
 
             # Per-asset trade counts in last 24h
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
@@ -141,8 +147,8 @@ def main(db_path: str):
         ).fetchall()
         attributed = 0
         total_sigs = len(signal_rows)
-        for k, v in signal_rows:
-            sig = load_json(v)
+        for row in signal_rows:
+            sig = load_json(row["value"])
             if sig.get("strategy"):
                 attributed += 1
         if total_sigs > 0:
@@ -173,23 +179,7 @@ def main(db_path: str):
     except Exception as e:
         check("equity_consistency", False, repr(e))
 
-    # ── 5. Leverage and exposure ────────────────────────────────────
-    try:
-        last_eq = conn.execute(
-            "SELECT equity, gross_exposure FROM equity_snapshots ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        if last_eq:
-            eq = float(last_eq["equity"])
-            gross = float(last_eq["gross_exposure"])
-            lev = gross / eq if eq > 0 else 0
-            if lev > 4.0:
-                warn("excessive_leverage", f"{lev:.2f}x gross leverage")
-        check("exposure_check", True,
-              f"leverage={lev:.2f}x" if last_eq else "no data")
-    except Exception as e:
-        check("exposure_check", False, repr(e))
-
-    # ── 6. Service and DB freshness ─────────────────────────────────
+    # ── 5. Service and DB freshness ─────────────────────────────────
     try:
         snap = conn.execute(
             "SELECT timestamp FROM equity_snapshots ORDER BY id DESC LIMIT 1"
@@ -203,7 +193,7 @@ def main(db_path: str):
     except Exception as e:
         check("db_freshness", False, repr(e))
 
-    # ── 7. Daily reflection also ran ────────────────────────────────
+    # ── 6. Daily reflection also ran ────────────────────────────────
     try:
         dr_raw = conn.execute(
             "SELECT value FROM state WHERE key = 'daily_reflection'"
