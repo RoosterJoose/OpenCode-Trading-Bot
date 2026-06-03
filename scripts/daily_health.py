@@ -186,7 +186,7 @@ def main(db_path: str):
         ).fetchone()
         if snap:
             ts = datetime.fromisoformat(snap["timestamp"])
-            age_sec = (datetime.utcnow() - ts).total_seconds()
+            age_sec = (datetime.now(timezone.utc) - ts.replace(tzinfo=timezone.utc)).total_seconds()
             fresh = age_sec < 300
             check("db_freshness", fresh,
                   f"{age_sec:.0f}s since last snapshot (threshold: 300s)")
