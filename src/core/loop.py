@@ -341,14 +341,17 @@ class TradingLoop:
 
         # Check exits first
         if pos and price > 0:
-            for strat in self.strategies:
-                if pos.strategy and strat.name() != pos.strategy:
-                    continue
-                result = strat.should_exit(asset, pos, price, candles, funding_rate)
-                if result:
-                    reason, limit = result
-                    await self._close(asset, pos, price, reason, exchange)
-                    return
+            if not pos.strategy:
+                logger.debug("%s: skipping exit — no strategy on position", asset)
+            else:
+                for strat in self.strategies:
+                    if strat.name() != pos.strategy:
+                        continue
+                    result = strat.should_exit(asset, pos, price, candles, funding_rate)
+                    if result:
+                        reason, limit = result
+                        await self._close(asset, pos, price, reason, exchange)
+                        return
 
         # Infer regime
         regime = self._infer_regime(candles)

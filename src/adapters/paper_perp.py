@@ -97,6 +97,9 @@ class PaperPerpExchange:
 
         if existing and order.side != existing.side:
             self._close_position(order.asset, fill_price)
+            self._trade_count += 1
+            if order.reduce_only:
+                return cloid
             existing = None
 
         if existing:
@@ -167,6 +170,10 @@ class PaperPerpExchange:
                     component_sources=list(raw.get("component_sources", [])),
                 )
                 if pos.asset and pos.entry_price > 0 and pos.size > 0:
+                    if not pos.strategy or (pos.stop_loss is None and pos.take_profit is None):
+                        logger.info("Skipping stale restored position %s (strategy=%s, sl=%s, tp=%s)",
+                                     pos.asset, pos.strategy, pos.stop_loss, pos.take_profit)
+                        continue
                     self.positions[pos.asset] = pos
             except (KeyError, TypeError, ValueError) as e:
                 logger.warning("Skipping invalid restored position: %s", e)
