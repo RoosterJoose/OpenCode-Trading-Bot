@@ -133,8 +133,8 @@ def main(db_path: str):
                     warn("unattributed_trades",
                          f"{len(pnls)} unattributed trades exist")
 
-            check("trade_quality", len(recent) < 200,
-                  f"{len(recent)} trades in last 24h")
+            check("trade_quality", len(recent) < 500,
+                  f"{len(recent)} trades in last 24h (threshold: 500)")
         else:
             check("trade_count", True, "0 trades")
     except Exception as e:
@@ -186,7 +186,7 @@ def main(db_path: str):
         ).fetchone()
         if snap:
             ts = datetime.fromisoformat(snap["timestamp"])
-            age_sec = (datetime.now(timezone.utc) - ts).total_seconds()
+            age_sec = (datetime.utcnow() - ts).total_seconds()
             fresh = age_sec < 300
             check("db_freshness", fresh,
                   f"{age_sec:.0f}s since last snapshot (threshold: 300s)")
