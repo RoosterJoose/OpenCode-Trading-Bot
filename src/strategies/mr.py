@@ -81,6 +81,13 @@ class MeanReversion(PerpStrategy):
             return None
         is_long = is_oversold
 
+        # Asset-specific drift regime (NotebookLM: >60% directional days)
+        drift = self._asset_drift(candles)
+        if drift == "bullish_drift" and not is_long:
+            return None
+        if drift == "bearish_drift" and is_long:
+            return None
+
         entry_price = last.close
         atr_value = self._atr(candles)
         if atr_value <= 0:
@@ -135,13 +142,15 @@ class MeanReversion(PerpStrategy):
                 source_l = s.source.lower()
                 if is_long and any(kw in source_l for kw in ("oversold", "pullback", "bollinger_touch_lower")):
                     sig_weight = self.signal_tracker.weight(s.source) if self.signal_tracker else 0.5
-                    if sig_weight > 0:
+                    has_history = self.signal_tracker.accuracy(s.source) is not None if self.signal_tracker else False
+                    if sig_weight > 0 and has_history:
                         altfins_confirm = True
                         component_sources.append(s.source)
                         sources.append(s.source.replace("altfins:", "") + f"_{sig_weight:.2f}")
                 elif not is_long and any(kw in source_l for kw in ("overbought", "bollinger_touch_upper", "resistance", "exhaustion")):
                     sig_weight = self.signal_tracker.weight(s.source) if self.signal_tracker else 0.5
-                    if sig_weight > 0:
+                    has_history = self.signal_tracker.accuracy(s.source) is not None if self.signal_tracker else False
+                    if sig_weight > 0 and has_history:
                         altfins_confirm = True
                         component_sources.append(s.source)
                         sources.append(s.source.replace("altfins:", "") + f"_{sig_weight:.2f}")
@@ -313,5 +322,23 @@ class MeanReversion(PerpStrategy):
 
     atr_stop_major = 2.0
     atr_stop_alt = 3.0
+
+    # ── Asset-specific drift regime (NotebookLM) ──
+
+    @staticmethod
+    def _asset_drift(candles: list[PerpCandle]) -> str:
+        if len(candles) < 100:
+            return "neutral"
+        closes = [c.close for c in candles[-168:]]
+        if len(closes) < 48:
+            return "neutral"
+        up = sum(1 for i in range(1, len(closes)) if closes[i] > closes[i-1])
+        r = up / (len(closes) - 1)
+        if r > 0.60:
+            return "bullish_drift"
+        if r < 0.40:
+            return "bearish_drift"
+        return "neutral"
+
     funding_threshold = 0.001
-    funding_halt_threshold = 0.005
+    funding_halt_threshold = 0.01  # mirrors PerpRisk extreme_funding_threshold
