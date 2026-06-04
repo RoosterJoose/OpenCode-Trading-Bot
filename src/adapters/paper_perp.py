@@ -29,7 +29,6 @@ class PaperPerpExchange:
     """
 
     TAKER_FEE = 0.00025
-    MAKER_FEE = 0.00015
     LIQUIDATION_BUFFER = 0.05
 
     def __init__(self, initial_balance: float = 10_000.0):

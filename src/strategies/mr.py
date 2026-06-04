@@ -235,4 +235,4 @@ class MeanReversion(PerpStrategy):
     atr_stop_major = 2.0
     atr_stop_alt = 3.0
     funding_threshold = 0.001
-    funding_halt_threshold = 0.005
+    funding_halt_threshold = 0.01 # mirrors PerpRisk extreme_funding_threshold
