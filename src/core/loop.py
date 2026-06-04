@@ -98,8 +98,14 @@ class TradingLoop:
 
     async def start(self):
         self.running = True
-        exchange = PaperPerpExchange(self.config.get("exchange", {}).get("initial_balance", 10_000.0))
+        saved_eq = self.store.get_state("paper_equity")
+        initial = float(saved_eq) if saved_eq else self.config.get("exchange", {}).get("initial_balance", 10_000.0)
+        exchange = PaperPerpExchange(initial_balance=initial)
         self._restore_paper_positions(exchange)
+        saved_peak = self.store.get_state("paper_peak_equity")
+        if saved_peak:
+            self.risk.peak_equity = max(float(saved_peak), initial)
+            self.risk.current_equity = initial
         hl = HyperliquidAdapter(
             wallet_address=self.config.get("hyperliquid", {}).get("wallet", ""),
             private_key=self.config.get("hyperliquid", {}).get("private_key", ""),
@@ -300,6 +306,8 @@ class TradingLoop:
         self.risk.update_equity(eq, ge)
         self.risk.set_gross_exposure(ge)
         self.store.save_equity_snapshot(eq, self.risk.peak_equity)
+        self.store.put_state("paper_equity", str(eq))
+        self.store.put_state("paper_peak_equity", str(self.risk.peak_equity))
         self.store.put_state("positions", [
             {
                 "asset": p.asset,
