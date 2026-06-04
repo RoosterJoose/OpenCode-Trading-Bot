@@ -332,6 +332,20 @@ class MeanReversion(PerpStrategy):
         closes = [c.close for c in candles[-168:]]
         if len(closes) < 48:
             return "neutral"
+
+        # Deep oversold override: if RSI on multi-day window is < 22, allow contrarian entries
+        long_closes = [c.close for c in candles[-48:]]
+        if len(long_closes) >= 15:
+            gains = losses = 0.0
+            for i in range(-14, 0):
+                d = long_closes[i] - long_closes[i-1]
+                if d >= 0: gains += d
+                else: losses -= d
+            if losses > 0:
+                rsi = 100 - 100 / (1 + gains/14 / (losses/14))
+                if rsi < 22:
+                    return "neutral"
+
         up = sum(1 for i in range(1, len(closes)) if closes[i] > closes[i-1])
         r = up / (len(closes) - 1)
         if r > 0.60:

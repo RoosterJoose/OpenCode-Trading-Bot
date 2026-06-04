@@ -106,6 +106,14 @@ class TrendFollow(PerpStrategy):
             if not cross_below and not (continuation_short and near_ema):
                 return None
 
+        # Asset-specific drift regime (NotebookLM: >60% directional days)
+        drift = self._asset_drift(candles)
+        is_long_signal = cross_above or (continuation_long and near_ema)
+        if drift == "bullish_drift" and not is_long_signal:
+            return None
+        if drift == "bearish_drift" and is_long_signal:
+            return None
+
         adx = self._adx(candles)
         adx_ok = adx is not None and adx >= self.adx_threshold
         hurst_override = regime == RegimeType.STRONGLY_TRENDING and (adx is None or adx < self.adx_threshold)
@@ -142,7 +150,8 @@ class TrendFollow(PerpStrategy):
                 source_l = s.source.lower()
                 if any(kw in source_l for kw in ("momentum", "breakout", "uptrend", "downtrend", "cross", "trend", "channel_up", "channel_down")):
                     sig_weight = self.signal_tracker.weight(s.source) if self.signal_tracker else 0.5
-                    if sig_weight > 0:
+                    has_history = self.signal_tracker.accuracy(s.source) is not None if self.signal_tracker else False
+                    if sig_weight > 0 and has_history:
                         altfins_confirm = True
                         component_sources.append(s.source)
                         sources.append(s.source.replace("altfins:", "") + f"_{sig_weight:.2f}")
@@ -178,6 +187,37 @@ class TrendFollow(PerpStrategy):
             "sources": sources,
             "component_sources": component_sources,
         }
+
+    # ── Asset-specific drift regime (NotebookLM: >60% directional days) ──
+
+    @staticmethod
+    def _asset_drift(candles: list[PerpCandle]) -> str:
+        if len(candles) < 100:
+            return "neutral"
+        closes = [c.close for c in candles[-168:]]  # up to 7 days of 1h data
+        if len(closes) < 48:
+            return "neutral"
+
+        # Deep oversold override: if RSI on multi-day window is < 22, allow contrarian entries
+        long_closes = [c.close for c in candles[-48:]]
+        if len(long_closes) >= 15:
+            gains = losses = 0.0
+            for i in range(-14, 0):
+                d = long_closes[i] - long_closes[i-1]
+                if d >= 0: gains += d
+                else: losses -= d
+            if losses > 0:
+                rsi = 100 - 100 / (1 + gains/14 / (losses/14))
+                if rsi < 22:
+                    return "neutral"
+
+        up_days = sum(1 for i in range(1, len(closes)) if closes[i] > closes[i-1])
+        ratio = up_days / (len(closes) - 1)
+        if ratio > 0.60:
+            return "bullish_drift"
+        if ratio < 0.40:
+            return "bearish_drift"
+        return "neutral"
 
     def should_exit(
         self,
