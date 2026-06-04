@@ -21,13 +21,15 @@ class TrendFollow(PerpStrategy):
         adx_period: int = 14,
         adx_threshold: float = 25.0,
         atr_period: int = 22,
-        atr_chandelier_mult_major: float = 2.5,
-        atr_chandelier_mult_alt: float = 3.5,
+        atr_chandelier_mult_long_major: float = 3.0,
+        atr_chandelier_mult_long_alt: float = 4.0,
+        atr_chandelier_mult_short_major: float = 2.0,
+        atr_chandelier_mult_short_alt: float = 2.5,
         psar_step: float = 0.015,
         psar_max_af: float = 0.18,
         psar_switch_hours: float = 48.0,
         min_volume_usd: float = 30_000_000,
-        min_oi_usd: float = 3_000_000,
+        min_oi_usd: float = 5_000_000,
         cooldown_cycles: int = 60,
         majors: set | None = None,
         signal_tracker=None,
@@ -37,8 +39,10 @@ class TrendFollow(PerpStrategy):
         self.adx_period = adx_period
         self.adx_threshold = adx_threshold
         self.atr_period = atr_period
-        self.atr_chandelier_mult_major = atr_chandelier_mult_major
-        self.atr_chandelier_mult_alt = atr_chandelier_mult_alt
+        self.atr_chandelier_mult_long_major = atr_chandelier_mult_long_major
+        self.atr_chandelier_mult_long_alt = atr_chandelier_mult_long_alt
+        self.atr_chandelier_mult_short_major = atr_chandelier_mult_short_major
+        self.atr_chandelier_mult_short_alt = atr_chandelier_mult_short_alt
         self.psar_step = psar_step
         self.psar_max_af = psar_max_af
         self.psar_switch_hours = psar_switch_hours
@@ -118,7 +122,6 @@ class TrendFollow(PerpStrategy):
         if adx_ok:
             sources.append("adx_confirmed")
         if hurst_override:
-            confidence = max(confidence - 0.1, 0.4)
             sources.append("hurst_override")
         if regime == RegimeType.STRONGLY_TRENDING:
             confidence += 0.2
@@ -149,11 +152,17 @@ class TrendFollow(PerpStrategy):
             sources.append("altfins_validated")
 
         if is_long and funding_rate < -0.0005:
-            confidence += 0.1
+            confidence += 0.15
             sources.append("funding_tailwind")
         elif not is_long and funding_rate > 0.0005:
-            confidence += 0.1
+            confidence += 0.15
             sources.append("funding_tailwind")
+        if funding_rate > 0.003:
+            confidence += 0.1 if is_long else 0.05
+            sources.append("funding_drag_boost" if is_long else "funding_crowded_long")
+        if funding_rate < -0.003:
+            confidence += 0.05 if is_long else 0.1
+            sources.append("funding_neg_short_boost" if not is_long else "funding_discount_long")
 
         confidence = min(confidence, 1.0)
 
@@ -191,7 +200,11 @@ class TrendFollow(PerpStrategy):
         if atr <= 0:
             return None
 
-        chandelier_mult = self.atr_chandelier_mult_major if asset in self.majors else self.atr_chandelier_mult_alt
+        chandelier_mult = (
+            self.atr_chandelier_mult_short_major if asset in self.majors else self.atr_chandelier_mult_short_alt
+        ) if is_short else (
+            self.atr_chandelier_mult_long_major if asset in self.majors else self.atr_chandelier_mult_long_alt
+        )
         atr_dist = atr * chandelier_mult
         min_dist = 0.015 * current_price
         max_dist = 0.04 * current_price
