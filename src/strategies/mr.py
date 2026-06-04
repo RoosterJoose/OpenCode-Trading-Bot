@@ -69,6 +69,11 @@ class MeanReversion(PerpStrategy):
         if regime in (RegimeType.STRONGLY_TRENDING, RegimeType.HIGH_VOL):
             return None
 
+        # Microstructure filters (NotebookLM: Hurst stability, VR test, autocorrelation)
+        if len(candles) >= 200:
+            if not self._microstructure_ok(candles):
+                return None
+
         rsi = self._rsi(candles)
         is_oversold = rsi is not None and rsi <= self.rsi_oversold
         is_overbought = rsi is not None and rsi >= (100 - self.rsi_oversold)
@@ -232,7 +237,81 @@ class MeanReversion(PerpStrategy):
             trs.append(max(h - l, abs(h - pc), abs(l - pc)))
         return sum(trs) / len(trs) if trs else 0.0
 
+    # ── Microstructure filters (NotebookLM: Hurst stability, VR test, autocorrelation) ──
+
+    def _hurst(self, closes: list[float], lag: int = 10) -> float:
+        n = len(closes)
+        if n < lag * 2:
+            return 0.5
+        ts = [math.log(closes[i] / closes[i-1]) for i in range(1, n) if closes[i-1] > 0]
+        if len(ts) < lag * 2:
+            return 0.5
+        lags = range(2, lag + 1)
+        tau = [math.sqrt(sum((ts[t] - ts[t - lag]) ** 2 / (n - lag) for t in range(lag, n)) if n > lag else 1) for lag in lags]
+        if any(t <= 0 for t in tau):
+            return 0.5
+        log_rs = [math.log(t) for t in tau]
+        log_lags = [math.log(l) for l in lags]
+        n_l = len(log_lags)
+        sx = sum(log_lags)
+        sy = sum(log_rs)
+        sxx = sum(x * x for x in log_lags)
+        sxy = sum(x * y for x, y in zip(log_lags, log_rs))
+        slope = (n_l * sxy - sx * sy) / (n_l * sxx - sx * sx) if (n_l * sxx - sx * sx) != 0 else 0
+        return slope
+
+    def _microstructure_ok(self, candles: list[PerpCandle]) -> bool:
+        closes = [c.close for c in candles]
+        n = len(closes)
+        if n < 200:
+            return True
+
+        # 1. Hurst stability: compute H on 5 overlapping sub-windows of 200 bars
+        h_vals = []
+        step = max(1, (n - 200) // 5)
+        for i in range(5):
+            start = min(i * step, n - 200)
+            sub = closes[start:start + 200]
+            h_vals.append(self._hurst(sub))
+        if len(h_vals) >= 3:
+            mean_h = sum(h_vals) / len(h_vals)
+            variance = sum((h - mean_h) ** 2 for h in h_vals) / len(h_vals)
+            h_std = math.sqrt(variance)
+            if h_std > 0.08:
+                return False
+
+        # 2. Variance Ratio test VR(2) and VR(5) both < 1.0
+        returns = [math.log(closes[i] / closes[i-1]) for i in range(1, n) if closes[i-1] > 0]
+        if len(returns) >= 10:
+            n_ret = len(returns)
+            var_1 = sum((r - sum(returns) / n_ret) ** 2 for r in returns) / n_ret if n_ret > 0 else 0
+            for q in (2, 5):
+                if len(returns) >= q * 2:
+                    agg = [sum(returns[i - q:i]) for i in range(q, len(returns) + 1, q)]
+                    n_agg = len(agg)
+                    if n_agg > 1:
+                        var_q = sum((a - sum(agg) / n_agg) ** 2 for a in agg) / n_agg if n_agg > 0 else 0
+                        vr = var_q / (q * var_1) if var_1 > 0 else 1.0
+                        if vr >= 1.0:
+                            return False
+
+        # 3. Targeted autocorrelation: require > 0.05 at dominant lag (1-5)
+        if len(returns) >= 10:
+            n_ret = len(returns)
+            mean_r = sum(returns) / n_ret
+            var_r = sum((r - mean_r) ** 2 for r in returns) / n_ret if n_ret > 0 else 0
+            if var_r > 0:
+                max_ac = 0.0
+                for lag in range(1, 6):
+                    cov = sum((returns[i] - mean_r) * (returns[i - lag] - mean_r) for i in range(lag, n_ret)) / (n_ret - lag) if n_ret > lag else 0
+                    ac = cov / var_r if var_r > 0 else 0
+                    max_ac = max(max_ac, abs(ac))
+                if max_ac <= 0.05:
+                    return False
+
+        return True
+
     atr_stop_major = 2.0
     atr_stop_alt = 3.0
     funding_threshold = 0.001
-    funding_halt_threshold = 0.01 # mirrors PerpRisk extreme_funding_threshold
+    funding_halt_threshold = 0.005

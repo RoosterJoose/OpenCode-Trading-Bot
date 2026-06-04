@@ -29,6 +29,7 @@ class PaperPerpExchange:
     """
 
     TAKER_FEE = 0.00025
+    MAKER_FEE = 0.00015
     LIQUIDATION_BUFFER = 0.05
 
     def __init__(self, initial_balance: float = 10_000.0):
@@ -40,6 +41,7 @@ class PaperPerpExchange:
         self._funding_rates: dict[str, float] = {}
         self._open_interest: dict[str, float] = {}
         self._orders: dict[str, Order] = {}
+        self._pending_limit_fills: dict[str, dict] = {}
         self._last_funding_time: Optional[datetime] = None
         self._perp_configs: dict[str, PerpConfig] = {}
         self._total_fees_paid = 0.0
@@ -77,7 +79,14 @@ class PaperPerpExchange:
         self._next_cloid += 1
         if order.order_type == OrderType.MARKET:
             return await self._fill_market(cloid, order)
+        # Limit order simulation: ~65% fill rate, 30s TTL, requote on failure
+        import random as _random
+        fill_chance = _random.random()
+        if fill_chance <= 0.65:
+            return await self._fill_market(cloid, order)
+        # Not filled immediately — simulate requote after delay
         self._orders[cloid] = order
+        self._pending_limit_fills[cloid] = {"order": order, "attempts": 0, "max_attempts": 3}
         return cloid
 
     async def _fill_market(self, cloid: str, order: Order) -> str:

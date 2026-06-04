@@ -63,6 +63,8 @@ class HyperliquidAdapter:
 
         self._ws: Optional[Any] = None
         self._ws_reconnect_delay = ws_reconnect_delay
+        self._ws_seq: dict[str, int] = {}  # channel -> last sequence number
+        self._ws_latency_log: list[float] = []
 
     # ── Public data (REST) ──────────────────────────────────────────────
 
@@ -298,13 +300,28 @@ class HyperliquidAdapter:
         self._running = True
         while self._running:
             try:
-                async with websockets.connect(HL_WS) as ws:
+                async with websockets.connect(HL_WS, ping_interval=15, ping_timeout=10) as ws:
                     self._ws = ws
                     await ws.send(json.dumps({"type": "subscribe", "channel": "allMids"}))
                     await ws.send(json.dumps({"type": "subscribe", "channel": "funding"}))
                     logger.info("HL WebSocket connected")
                     async for msg in ws:
                         data = json.loads(msg)
+                        arrival = time.time()
+                        # Sequencing check
+                        if "channel" in data:
+                            ch = data["channel"]
+                            seq = data.get("seq")
+                            if seq is not None:
+                                last_seq = self._ws_seq.get(ch, -1)
+                                if last_seq >= 0 and seq != last_seq + 1:
+                                    logger.warning("WS seq gap on %s: %d -> %d", ch, last_seq, seq)
+                                self._ws_seq[ch] = seq
+                        # Latency tracking
+                        ts = data.get("timestamp", 0)
+                        if ts:
+                            self._ws_latency_log.append(arrival - ts)
+                            self._ws_latency_log = self._ws_latency_log[-100:]
                         await self._handle_ws_message(data)
             except Exception as e:
                 logger.warning("WS disconnected: %s — reconnecting in %.0fs", e, self._ws_reconnect_delay)

@@ -188,5 +188,35 @@ class Store:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    # ── Delegation Gap metrics (NotebookLM) ─────────────────────────
+
+    def record_delegation_metric(self, source: str, accepted: bool, impl_shortfall_pct: float = 0.0):
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO state (key, value) VALUES (?, ?)",
+                (f"delegation_{source}_{datetime.now(timezone.utc).isoformat()}",
+                 json.dumps({"accepted": accepted, "shortfall_pct": round(impl_shortfall_pct, 4)})),
+            )
+            self._conn.commit()
+
+    def delegation_summary(self) -> dict:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT key, value FROM state WHERE key LIKE 'delegation_%'"
+            ).fetchall()
+            if not rows:
+                return {"total": 0, "accepted": 0, "rejected": 0, "avg_shortfall": 0.0}
+            total = len(rows)
+            accepted = sum(1 for _, v in rows if json.loads(v).get("accepted"))
+            shortfalls = [json.loads(v).get("shortfall_pct", 0) for _, v in rows if json.loads(v).get("accepted")]
+            avg_sf = sum(shortfalls) / len(shortfalls) if shortfalls else 0.0
+            return {
+                "total": total,
+                "accepted": accepted,
+                "rejected": total - accepted,
+                "rejection_rate": round((total - accepted) / total * 100, 1) if total > 0 else 0.0,
+                "avg_impl_shortfall_bps": round(avg_sf * 100, 2),
+            }
+
     def close(self):
         self._conn.close()

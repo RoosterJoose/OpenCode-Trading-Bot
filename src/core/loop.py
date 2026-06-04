@@ -465,6 +465,8 @@ class TradingLoop:
                 intent = TradeIntent.from_row(row)
                 ok, reason = await self._execute_intent(intent, exchange, hl)
                 self.store.update_intent_status(intent.id, "accepted" if ok else "rejected", reason)
+                if not ok:
+                    self.store.record_delegation_metric(intent.source if intent.source else "freqtrade", False)
             except Exception as e:
                 self.store.update_intent_status(int(row["id"]), "rejected", f"invalid_intent: {e}")
 
@@ -544,6 +546,10 @@ class TradingLoop:
             pos.entry_confidence = intent.confidence
             pos.stop_loss = stop_price
             pos.component_sources = list(intent.components)
+
+        # Delegation Gap tracking (NotebookLM)
+        impl_shortfall = abs(entry_price - intent.intended_entry_price) / intent.intended_entry_price * 100 if intent.intended_entry_price > 0 else 0
+        self.store.record_delegation_metric(intent.source if intent.source else "freqtrade", True, impl_shortfall)
         self.risk.record_position_open(intent.asset)
         logger.info(
             "INTENT ACCEPTED %s %s qty=%.4f @ %.2f stop=%.2f lev=%.1fx risk=$%.0f conf=%.2f %s",
