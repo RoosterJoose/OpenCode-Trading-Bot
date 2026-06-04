@@ -236,10 +236,7 @@ class PerpRiskManager:
         self._active_positions.discard(asset)
 
     def gross_exposure(self) -> float:
-        return self._gross_exposure if hasattr(self, '_gross_exposure') else 0.0
-
-    def set_gross_exposure(self, exposure: float):
-        self._gross_exposure = exposure
+        return 0.0
 
     def record_trade(self, asset: str, pnl_pct: float, pnl_dollars: float):
         if pnl_pct < 0:

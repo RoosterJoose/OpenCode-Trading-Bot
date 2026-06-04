@@ -49,6 +49,7 @@ logger = logging.getLogger("hermes.loop")
 
 ASSET_UNIVERSE = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT",
                     "LTC", "NEAR", "ATOM", "UNI", "ARB", "OP", "APT", "SUI", "AAVE", "INJ"]
+TREND_UNIVERSE = {"BTC", "ETH", "SOL"}
 MIN_ENTRY_CONFIDENCE = 0.70
 
 
@@ -298,7 +299,6 @@ class TradingLoop:
         eq = exchange.equity
         ge = exchange.gross_exposure
         self.risk.update_equity(eq, ge)
-        self.risk.set_gross_exposure(ge)
         self.store.save_equity_snapshot(eq, self.risk.peak_equity)
         self.store.put_state("positions", [
             {
