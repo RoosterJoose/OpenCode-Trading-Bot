@@ -55,7 +55,7 @@ def uptrend_candles(n: int = 120, start: float = 80.0) -> list[PerpCandle]:
 
 
 def sideways_candles(n: int = 120, price: float = 100.0) -> list[PerpCandle]:
-    """Generate random-walk-like candles with no trend for RANDOM_WALK regime."""
+    """Generate low-vol sideways candles for MR testing with neutral drift."""
     import random
     random.seed(42)
     candles = []
@@ -66,6 +66,22 @@ def sideways_candles(n: int = 120, price: float = 100.0) -> list[PerpCandle]:
         c = p + noise
         h = max(o, c) + abs(noise) * 0.5
         l = min(o, c) - abs(noise) * 0.5
+        candles.append(PerpCandle(i, o, h, l, c, 1_000_000))
+        p = c
+    return candles
+
+
+def neutral_drift_candles(n: int = 120, price: float = 100.0) -> list[PerpCandle]:
+    """Generate ping-pong candles with equal up/down moves for neutral drift."""
+    candles = []
+    p = price
+    for i in range(n):
+        direction = 1 if i % 2 == 0 else -1
+        move = direction * 0.2
+        o = p
+        c = p + move
+        h = max(o, c) + 0.1
+        l = min(o, c) - 0.1
         candles.append(PerpCandle(i, o, h, l, c, 1_000_000))
         p = c
     return candles
@@ -113,11 +129,14 @@ class SimulationTests(unittest.TestCase):
 
     def test_mr_short_entry_on_overbought(self):
         """MR strategy emits SHORT with confidence >= 0.70 when RSI > 72."""
-        # Generate candles with high RSI: many up candles, then a spike
-        c = uptrend_candles(120, 80.0)
-        # Add an overbought spike
+        c = neutral_drift_candles(106, 80.0)
+        # Add 14 consecutive up candles to push RSI > 72
+        for i in range(14):
+            last = c[-1]
+            c.append(PerpCandle(len(c), last.close, last.close * 1.008, last.close * 0.995, last.close * 1.006, 1_000_000))
+        # Final overbought spike
         last = c[-1]
-        c.append(PerpCandle(len(c), last.close, last.close * 1.05, last.close * 0.99, last.close * 1.03, 1_000_000))
+        c.append(PerpCandle(len(c), last.close, last.close * 1.03, last.close * 0.99, last.close * 1.02, 1_000_000))
         strat = MeanReversion()
         result = strat.should_enter("BTC", c, [], RegimeType.MEAN_REVERTING, None, -0.001)
         self.assertIsNotNone(result, "MR should enter SHORT when overbought")
@@ -127,9 +146,14 @@ class SimulationTests(unittest.TestCase):
 
     def test_mr_long_entry_on_oversold(self):
         """MR strategy emits LONG with confidence >= 0.70 when RSI < 28."""
-        c = downtrend_candles(120, 100.0)
+        c = neutral_drift_candles(106, 100.0)
+        # Add 14 consecutive down candles to push RSI < 28
+        for i in range(14):
+            last = c[-1]
+            c.append(PerpCandle(len(c), last.close, last.close * 0.995, last.close * 0.99, last.close * 0.993, 1_000_000))
+        # Final oversold dip
         last = c[-1]
-        c.append(PerpCandle(len(c), last.close, last.close * 1.01, last.close * 0.95, last.close * 0.97, 1_000_000))
+        c.append(PerpCandle(len(c), last.close, last.close * 0.98, last.close * 0.95, last.close * 0.97, 1_000_000))
         strat = MeanReversion()
         result = strat.should_enter("BTC", c, [], RegimeType.MEAN_REVERTING, None, -0.001)
         self.assertIsNotNone(result, "MR should enter LONG when oversold")
@@ -176,11 +200,15 @@ class SimulationTests(unittest.TestCase):
         self.assertNotIn("no_altfins_confirm", sources)
 
     def test_altfins_boost_increases_confidence(self):
-        """Altfins aligned signal increases confidence."""
+        """Altfins aligned signal increases confidence (with 5+ samples)."""
         c = downtrend_candles()
         sig = Signal("altfins:CHANNEL_DOWN", "BTC", Side.SHORT, 0.7, datetime.now(timezone.utc))
         with tempfile.TemporaryDirectory() as tmp:
-            strat = TrendFollowStrategy(signal_tracker=SignalTracker(Path(tmp) / "sig.json"))
+            tracker = SignalTracker(Path(tmp) / "sig.json")
+            # Seed tracker with 5 samples so accuracy returns non-None
+            for _ in range(5):
+                tracker.record("altfins:CHANNEL_DOWN", True)
+            strat = TrendFollowStrategy(signal_tracker=tracker)
             result_aligned = strat.should_enter("BTC", c, [sig], RegimeType.STRONGLY_TRENDING, None, 0.0)
         self.assertIsNotNone(result_aligned)
         side, conf_aligned, meta = result_aligned
