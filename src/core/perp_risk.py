@@ -70,6 +70,8 @@ class PerpRiskManager:
         self._price_history: dict[str, list[float]] = defaultdict(lambda: [])
         self._recent_outcomes: list[bool] = []
         self._active_positions: set[str] = set()
+        self._gross_exposure: float = 0.0
+        self.max_consecutive_losses: int = 3
 
     def update_equity(self, equity: float, gross_exposure: float):
         self.current_equity = equity
@@ -104,6 +106,15 @@ class PerpRiskManager:
         )
         if daily_loss <= -self.max_daily_loss_pct:
             return False, f"daily_loss_halt: {daily_loss:.1f}%"
+        if current_leverage >= self.max_portfolio_leverage:
+            return False, f"lev_halt: {current_leverage:.2f}x >= {self.max_portfolio_leverage}x"
+        return True, "ok"
+
+    def consecutive_loss_allows(self, asset: str) -> tuple[bool, str]:
+        cls = self._consecutive_losses.get(asset, 0)
+        if cls >= self.max_consecutive_losses:
+            return False, f"consecutive_losses: {cls} >= {self.max_consecutive_losses}"
+        return True, "ok"
         if current_leverage >= self.max_portfolio_leverage:
             return False, f"lev_halt: {current_leverage:.2f}x >= {self.max_portfolio_leverage}x"
         return True, "ok"

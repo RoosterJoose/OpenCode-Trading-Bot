@@ -211,14 +211,23 @@ class MeanReversion(PerpStrategy):
             r_mult = (current_price - entry) / max(stop_dist, 0.001)
 
         if r_mult >= self.tp3_r_mult:
+            self._cooldowns[asset] = self.cooldown_bars
             return "tp3", current_price
         if r_mult >= self.tp2_r_mult:
+            self._cooldowns[asset] = self.cooldown_bars
             return "tp2", current_price
         if r_mult >= self.tp1_r_mult:
+            self._cooldowns[asset] = self.cooldown_bars
             return "tp1", current_price
 
         if funding_rate > self.funding_halt_threshold:
-            return "funding_spike", current_price
+            if not is_short:
+                self._cooldowns[asset] = self.cooldown_bars
+                return "funding_spike", current_price
+        elif funding_rate < -self.funding_halt_threshold:
+            if is_short:
+                self._cooldowns[asset] = self.cooldown_bars
+                return "funding_spike", current_price
 
         return None
 
@@ -256,7 +265,8 @@ class MeanReversion(PerpStrategy):
         if len(ts) < lag * 2:
             return 0.5
         lags = range(2, lag + 1)
-        tau = [math.sqrt(sum((ts[t] - ts[t - lag]) ** 2 / (n - lag) for t in range(lag, n)) if n > lag else 1) for lag in lags]
+        n_ts = len(ts)
+        tau = [math.sqrt(sum((ts[t] - ts[t - lag]) ** 2 / (n_ts - lag) for t in range(lag, n_ts)) if n_ts > lag else 1) for lag in lags]
         if any(t <= 0 for t in tau):
             return 0.5
         log_rs = [math.log(t) for t in tau]

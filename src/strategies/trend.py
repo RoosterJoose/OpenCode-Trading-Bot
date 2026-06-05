@@ -229,12 +229,13 @@ class TrendFollow(PerpStrategy):
     ) -> Optional[tuple[str, Optional[float]]]:
         is_short = position.side == Side.SHORT
         sl = position.stop_loss or 0
-        if is_short:
-            if current_price >= sl:
-                return "stop_loss", current_price
-        else:
-            if current_price <= sl:
-                return "stop_loss", current_price
+        if sl > 0:
+            if is_short:
+                if current_price >= sl:
+                    return "stop_loss", current_price
+            else:
+                if current_price <= sl:
+                    return "stop_loss", current_price
 
         atr = self._atr(candles)
         if atr <= 0:
@@ -285,7 +286,11 @@ class TrendFollow(PerpStrategy):
                     return "ema_death_cross", current_price
 
         if funding_rate > 0.003:
-            return "funding_drag", current_price
+            if not is_short:
+                return "funding_drag", current_price
+        elif funding_rate < -0.003:
+            if is_short:
+                return "funding_drag", current_price
 
         return None
 
@@ -361,4 +366,4 @@ class TrendFollow(PerpStrategy):
                     sar = ep
                     ep = highs[i]
                     af = self.psar_step
-        return sar if is_up else None
+        return sar

@@ -381,6 +381,10 @@ class TradingLoop:
         if not funding_ok:
             return
 
+        cl_ok, cl_msg = self.risk.consecutive_loss_allows(asset)
+        if not cl_ok:
+            return
+
         # Evaluate entries
         for strat in self.strategies:
             sig_bucket = f"{strat.name()}:{asset}"
@@ -462,6 +466,7 @@ class TradingLoop:
                     risk_dollars, confidence,
                     len(altfins_sigs),
                 )
+                break
 
             if self._suggested_params:
                 self.store.put_state("pending_param_changes", self._suggested_params)

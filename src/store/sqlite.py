@@ -17,6 +17,8 @@ class Store:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._init_db()
 
     def _init_db(self):
@@ -102,6 +104,12 @@ class Store:
                     impact_notes TEXT NOT NULL DEFAULT ''
                 );
                 CREATE INDEX IF NOT EXISTS idx_param_changes_status ON parameter_changes(status);
+
+                CREATE INDEX IF NOT EXISTS idx_trades_asset ON trades(asset);
+                CREATE INDEX IF NOT EXISTS idx_trades_strategy ON trades(strategy);
+                CREATE INDEX IF NOT EXISTS idx_trades_exit_time ON trades(exit_time);
+                CREATE INDEX IF NOT EXISTS idx_equity_ts ON equity_snapshots(timestamp);
+                CREATE INDEX IF NOT EXISTS idx_intents_expires ON trade_intents(expires_at);
             """)
             self._conn.commit()
 
