@@ -38,7 +38,7 @@ sudo -u "$HERMES_USER" "$INSTALL_DIR/.venv/bin/pip" install --quiet httpx websoc
 echo "==> 5. Creating systemd service..."
 sudo tee /etc/systemd/system/hermes-bot.service > /dev/null <<'SERVICE'
 [Unit]
-Description=Hermes v2 — Hyperliquid Perp Bot
+Description=Hermes v2 — Coinbase Perp Bot
 After=network-online.target
 Wants=network-online.target
 
@@ -52,9 +52,9 @@ Restart=on-failure
 RestartSec=10
 # Logs go to journald by default. View with: journalctl -u hermes-bot -f
 
-# Environment (set your Hyperliquid keys when ready):
-# Environment=HERMES_HYPERLIQUID__WALLET=0x...
-# Environment=HERMES_HYPERLIQUID__PRIVATE_KEY=...
+# Environment (set your Coinbase keys when ready):
+# Environment=HERMES_COINBASE__API_KEY_ID=organizations/.../apiKeys/...
+# Environment=HERMES_COINBASE__PRIVATE_KEY=-----BEGIN EC PRIVATE KEY-----\n...
 
 [Install]
 WantedBy=multi-user.target
@@ -134,6 +134,13 @@ sudo systemctl start hermes-bot
 sudo systemctl start hermes-auto-update.timer
 sudo systemctl start hermes-audit.timer
 
+echo "==> 9. Running cleanup verification..."
+if grep -r "hyperliquid\|Hyperliquid\|api.hyperliquid" "$INSTALL_DIR/src" --include="*.py" 2>/dev/null | grep -qv "_deprecated"; then
+    echo "FAIL: Hyperliquid references remain in source. Aborting." >&2
+    exit 1
+fi
+echo "  No Hyperliquid references found in source ✅"
+
 echo ""
 echo "=============================================="
 echo "  Hermes v2 deployed!"
@@ -142,7 +149,7 @@ echo "  Logs:   sudo journalctl -u hermes-bot -f"
 echo "  Stop:   sudo systemctl stop hermes-bot"
 echo "  Start:  sudo systemctl start hermes-bot"
 echo ""
-echo "  To set Hyperliquid keys later:"
+echo "  To set Coinbase API keys:"
 echo "    sudo systemctl edit hermes-bot"
 echo "    (add Environment= lines, then restart)"
 echo "=============================================="

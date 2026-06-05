@@ -1,5 +1,5 @@
 """
-Main trading loop — Hyperliquid perps with semi-auto mode.
+Main trading loop — perps with semi-auto mode.
 
 60s cadence:
   1. Fetch market data (prices, candels, funding, OI) for universe

@@ -1,5 +1,5 @@
 """
-Paper perp exchange — models Hyperliquid perp trading with funding, liquidation, and leverage.
+Paper perp exchange — models perp trading with funding, liquidation, and leverage.
 No real I/O. State is persisted to SQLite for crash recovery.
 """
 
@@ -24,7 +24,7 @@ class PaperPerpExchange:
     """Paper exchange that models perp mechanics:
     - Leverage with liquidation price
     - 8h funding rate accrual
-    - Taker/maker fees (Hyperliquid standard)
+    - Taker/maker fees (exchange standard)
     - Position tracking
     """
 

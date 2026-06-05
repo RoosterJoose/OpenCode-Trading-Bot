@@ -83,7 +83,7 @@ def setup_logging(verbose: bool = False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Hermes v2 — Hyperliquid perp bot")
+    parser = argparse.ArgumentParser(description="Hermes v2 — Perp trading bot")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     parser.add_argument(
         "--data-dir", type=Path, default=Path("data"),

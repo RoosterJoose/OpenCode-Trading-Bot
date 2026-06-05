@@ -82,7 +82,7 @@ HTML = """<!DOCTYPE html>
     </section>
     <section class="grid">
       <div class="card section"><div class="head"><div><h3>Equity Curve <span class="neutral">ⓘ</span></h3><div><b id="curve-equity">—</b> <span class="gain" id="curve-change">—</span></div></div><div class="tools"><button data-range="1D">1D</button><button data-range="1W">1W</button><button class="active" data-range="1M">1M</button><button data-range="3M">3M</button></div></div><canvas class="chart" id="equity-chart"></canvas></div>
-      <div class="card section" id="markets"><div class="head"><h3>Market Intelligence <span class="neutral">ⓘ</span></h3></div><div class="mini-grid"><div class="intel-card"><div class="label">Market Regime</div><h3 class="gain" id="market-regime">Watching</h3><div class="sub">Hyperliquid + Altfins</div></div><div class="intel-card"><div class="label">Volatility</div><h3 id="volatility">Normal</h3><div class="sub" id="vol-sub">ATR gates active</div></div><div class="intel-card"><div class="label">Funding Sentiment</div><h3 class="gain" id="funding">Enabled</h3><div class="sub">long confidence source</div></div><div class="intel-card"><div class="label">Altfins Signals</div><h3 class="gain" id="altfins-count">0</h3><div class="sub" id="altfins-sub">last hour</div></div></div><div class="sub" style="margin-top:13px">Market Heatmap (24H)</div><div class="heat" id="heatmap"></div></div>
+      <div class="card section" id="markets"><div class="head"><h3>Market Intelligence <span class="neutral">ⓘ</span></h3></div><div class="mini-grid"><div class="intel-card"><div class="label">Market Regime</div><h3 class="gain" id="market-regime">Watching</h3><div class="sub">Coinbase + Altfins</div></div><div class="intel-card"><div class="label">Volatility</div><h3 id="volatility">Normal</h3><div class="sub" id="vol-sub">ATR gates active</div></div><div class="intel-card"><div class="label">Funding Sentiment</div><h3 class="gain" id="funding">Enabled</h3><div class="sub">long confidence source</div></div><div class="intel-card"><div class="label">Altfins Signals</div><h3 class="gain" id="altfins-count">0</h3><div class="sub" id="altfins-sub">last hour</div></div></div><div class="sub" style="margin-top:13px">Market Heatmap (24H)</div><div class="heat" id="heatmap"></div></div>
     </section>
     <section class="card section" id="strategies" style="margin-top:14px"><div class="head"><h3>Strategy Performance <span class="neutral">ⓘ</span></h3></div><div class="strategies" id="strategy-cards"></div></section>
     <section class="bottom">
@@ -263,32 +263,26 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self._send_json(_MARKET_CACHE["data"])
             return
         try:
-            req = urllib.request.Request(
-                "https://api.hyperliquid.xyz/info",
-                data=json.dumps({"type": "metaAndAssetCtxs"}).encode(),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                meta, ctxs = json.loads(resp.read().decode())
+            snapshot_path = _repo / "data" / "external_snapshot.json"
+            snapshot = {}
+            if snapshot_path.exists():
+                snapshot = json.loads(snapshot_path.read_text())
+            funding = snapshot.get("funding", {})
+            oi = snapshot.get("oi", {})
+
+            # Read prices from the most recent equity snapshot name — fallback to empty
+            assets_in_data = set(list(funding.keys())[:20])
             markets = []
-            for coin, ctx in zip(meta.get("universe", []), ctxs):
-                asset = coin.get("name", "")
-                if asset not in ASSETS:
+            for asset in ASSETS:
+                if asset not in assets_in_data:
                     continue
-                mark = float(ctx.get("markPx") or ctx.get("midPx") or 0)
-                prev = float(ctx.get("prevDayPx") or 0)
-                change = ((mark - prev) / prev * 100) if mark and prev else 0.0
                 markets.append({
                     "asset": asset,
-                    "price": mark,
-                    "change_24h": change,
-                    "funding": float(ctx.get("funding") or 0),
-                    "open_interest": float(ctx.get("openInterest") or 0),
-                    "volume_24h": float(ctx.get("dayNtlVlm") or 0),
+                    "funding_rate": funding.get(asset, 0),
+                    "open_interest": oi.get(asset, 0),
                 })
-            markets.sort(key=lambda m: ASSETS.index(m["asset"]))
-            _MARKET_CACHE.update({"ts": now, "data": markets})
+            _MARKET_CACHE["data"] = markets
+            _MARKET_CACHE["ts"] = now
             self._send_json(markets)
         except Exception:
             self._send_json(_MARKET_CACHE["data"] or [])
