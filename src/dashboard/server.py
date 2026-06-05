@@ -271,6 +271,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             prices = snapshot.get("prices", {})
             funding = snapshot.get("funding", {})
             oi = snapshot.get("oi", {})
+            change_24h = snapshot.get("change_24h", {})
 
             assets_in_data = [a for a in ASSETS if a in prices]
             markets = []
@@ -278,6 +279,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 markets.append({
                     "asset": asset,
                     "price": prices.get(asset, 0),
+                    "change_24h": change_24h.get(asset, 0),
                     "funding": funding.get(asset, 0),
                     "open_interest": oi.get(asset, 0),
                 })
