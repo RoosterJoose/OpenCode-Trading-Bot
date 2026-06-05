@@ -30,6 +30,7 @@ from src.core.types import (
     PerpPosition,
     Side,
 )
+from src.adapters.base import ExchangeAdapter
 
 logger = logging.getLogger("hermes.hyperliquid")
 
@@ -38,7 +39,7 @@ HL_EXCHANGE = "https://api.hyperliquid.xyz/exchange"
 HL_WS = "wss://api.hyperliquid.xyz/ws"
 
 
-class HyperliquidAdapter:
+class HyperliquidAdapter(ExchangeAdapter):
     def __init__(
         self,
         wallet_address: str = "",
@@ -149,10 +150,15 @@ class HyperliquidAdapter:
         configs = {}
         for asset_data in data.get("universe", data if isinstance(data, list) else []):
             name = asset_data.get("name", asset_data.get("coin", ""))
+            sz_dec = asset_data.get("szDecimals", None)
+            if sz_dec is not None:
+                step = 10 ** (-sz_dec)
+            else:
+                step = float(asset_data.get("stepSize", 0.001))
             configs[name] = PerpConfig(
                 asset=name,
                 max_leverage=float(asset_data.get("maxLeverage", 3)),
-                step_size=float(asset_data.get("szDecimals", asset_data.get("stepSize", 0.001))),
+                step_size=step,
                 min_size=float(asset_data.get("minSize", 0.001)),
             )
         self._perp_configs = configs
@@ -350,6 +356,9 @@ class HyperliquidAdapter:
     async def fetch_price(self, asset: str) -> float:
         mids = self._latest_mids or await self.fetch_all_mids()
         return mids.get(asset, 0.0)
+
+    async def get_funding_rate(self, asset: str) -> float:
+        return self._latest_funding.get(asset, 0.0)
 
     async def close(self):
         self._running = False
