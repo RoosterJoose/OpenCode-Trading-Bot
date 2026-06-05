@@ -108,6 +108,13 @@ class PerpRiskManager:
             return False, f"daily_loss_halt: {daily_loss:.1f}%"
         if current_leverage >= self.max_portfolio_leverage:
             return False, f"lev_halt: {current_leverage:.2f}x >= {self.max_portfolio_leverage}x"
+
+        # Portfolio-wide kill switch (NotebookLM: WR < 48% or daily loss > 3.5%)
+        if len(self._recent_outcomes) >= 10:
+            wr = sum(self._recent_outcomes) / len(self._recent_outcomes)
+            if wr < 0.48:
+                return False, f"portfolio_wr_halt: {wr:.0%} WR on last {len(self._recent_outcomes)} trades"
+
         return True, "ok"
 
     def consecutive_loss_allows(self, asset: str) -> tuple[bool, str]:

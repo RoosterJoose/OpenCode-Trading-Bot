@@ -30,7 +30,7 @@ class TrendFollow(PerpStrategy):
         psar_switch_hours: float = 48.0,
         min_volume_usd: float = 30_000_000,
         min_oi_usd: float = 5_000_000,
-        cooldown_cycles: int = 60,
+        cooldown_cycles: int = 30,
         majors: set | None = None,
         signal_tracker=None,
     ):
