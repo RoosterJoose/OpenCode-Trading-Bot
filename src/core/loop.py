@@ -772,6 +772,10 @@ class TradingLoop:
             logger.info("  SUGGEST: %s = %.2f (was %.2f) — %s [conf=%.2f]",
                          s["parameter"], s["suggested_value"],
                          s["current_value"], s["reason"], s["confidence"])
+            self.store.insert_param_change(
+                s["parameter"], str(s["current_value"]), str(s["suggested_value"]),
+                "pending" if s["confidence"] < 0.6 else "suggested"
+            )
         if reflection["needs_human_review"]:
             logger.info("  ⚠ Human review recommended for low-confidence suggestions")
         logger.info("===========================")

@@ -78,6 +78,30 @@ class Store:
                     expires_at TEXT NOT NULL,
                     processed_at TEXT
                 );
+
+                CREATE TABLE IF NOT EXISTS lessons (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,
+                    asset TEXT NOT NULL DEFAULT 'PORTFOLIO_WIDE',
+                    pattern_category TEXT NOT NULL,
+                    pattern_detail TEXT NOT NULL,
+                    frequency_count INTEGER NOT NULL DEFAULT 1,
+                    action TEXT NOT NULL DEFAULT '',
+                    created_at TEXT DEFAULT (datetime('now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_lessons_date_cat ON lessons(date, pattern_category);
+
+                CREATE TABLE IF NOT EXISTS parameter_changes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    parameter_name TEXT NOT NULL,
+                    old_value TEXT NOT NULL,
+                    suggested_value TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    applied_at TEXT,
+                    impact_notes TEXT NOT NULL DEFAULT ''
+                );
+                CREATE INDEX IF NOT EXISTS idx_param_changes_status ON parameter_changes(status);
             """)
             self._conn.commit()
 
@@ -217,6 +241,62 @@ class Store:
                 "rejection_rate": round((total - accepted) / total * 100, 1) if total > 0 else 0.0,
                 "avg_impl_shortfall_bps": round(avg_sf * 100, 2),
             }
+
+    # ── Lessons (append-only learning log, NotebookLM design) ─────────
+
+    def insert_lesson(self, date: str, asset: str, category: str, detail: str, count: int, action: str = ""):
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO lessons (date, asset, pattern_category, pattern_detail, frequency_count, action) VALUES (?, ?, ?, ?, ?, ?)",
+                (date, asset, category, detail, count, action),
+            )
+            self._conn.commit()
+
+    def lessons(self, days: int = 30, category: str = "") -> list[dict]:
+        with self._lock:
+            if category:
+                rows = self._conn.execute(
+                    "SELECT * FROM lessons WHERE date >= date('now', ? || ' days') AND pattern_category = ? ORDER BY date DESC",
+                    (f"-{days}", category),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM lessons WHERE date >= date('now', ? || ' days') ORDER BY date DESC, frequency_count DESC LIMIT 200",
+                    (f"-{days}",),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+    def lessons_summary(self, days: int = 30) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT pattern_category, pattern_detail, SUM(frequency_count) as total, COUNT(DISTINCT date) as days_seen
+                   FROM lessons WHERE date >= date('now', ? || ' days')
+                   GROUP BY pattern_category, pattern_detail ORDER BY total DESC LIMIT 20""",
+                (f"-{days}",),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    # ── Parameter change tracking ─────────────────────────────────────
+
+    def insert_param_change(self, param: str, old_val: str, new_val: str, status: str = "pending"):
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO parameter_changes (parameter_name, old_value, suggested_value, status) VALUES (?, ?, ?, ?)",
+                (param, old_val, new_val, status),
+            )
+            self._conn.commit()
+
+    def param_changes(self, status: str = "") -> list[dict]:
+        with self._lock:
+            if status:
+                rows = self._conn.execute(
+                    "SELECT * FROM parameter_changes WHERE status = ? ORDER BY created_at DESC", (status,)
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM parameter_changes ORDER BY created_at DESC LIMIT 50"
+                ).fetchall()
+            return [dict(r) for r in rows]
 
     def close(self):
         self._conn.close()

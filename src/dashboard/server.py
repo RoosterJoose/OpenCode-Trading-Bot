@@ -161,6 +161,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             "/api/daily-reflection": self._api_daily_reflection,
             "/api/health": self._api_health,
             "/api/learnings": self._api_learnings,
+            "/api/lessons": self._api_lessons,
+            "/api/param-changes": self._api_param_changes,
             "/api/readiness": self._api_readiness,
             "/api/intents": self._api_intents,
         }.get(api)
@@ -339,6 +341,31 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self._send_json(result)
         except Exception:
             self._send_json({"passed": True, "checks": []})
+        finally:
+            conn.close()
+
+    def _api_lessons(self):
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT pattern_category, pattern_detail, SUM(frequency_count) as total, COUNT(DISTINCT date) as days_seen "
+                "FROM lessons GROUP BY pattern_category, pattern_detail ORDER BY total DESC LIMIT 30"
+            ).fetchall()
+            self._send_json([dict(r) for r in rows])
+        except Exception:
+            self._send_json([])
+        finally:
+            conn.close()
+
+    def _api_param_changes(self):
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM parameter_changes ORDER BY created_at DESC LIMIT 50"
+            ).fetchall()
+            self._send_json([dict(r) for r in rows])
+        except Exception:
+            self._send_json([])
         finally:
             conn.close()
 

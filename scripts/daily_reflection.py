@@ -347,6 +347,27 @@ def main(db_path: str):
     except Exception:
         pass
 
+    # ── Insert lessons into append-only table (NotebookLM design) ────
+    try:
+        # Clear old lessons for today before inserting fresh
+        conn.execute("DELETE FROM lessons WHERE date = ?", (report_date,))
+        for l in learning:
+            if l["type"] == "market_summary":
+                continue
+            cat = l["type"]
+            detail = l.get("reason", l.get("action", ""))
+            cnt = l.get("count", 1)
+            action = l.get("action", "")
+            assets = l.get("assets", [])
+            for asset in assets if assets else ["PORTFOLIO_WIDE"]:
+                conn.execute(
+                    "INSERT INTO lessons (date, asset, pattern_category, pattern_detail, frequency_count, action) VALUES (?, ?, ?, ?, ?, ?)",
+                    (report_date, asset, cat, detail, cnt, action),
+                )
+        conn.commit()
+    except Exception as e:
+        print(f"Lesson insert error: {e}", file=sys.stderr)
+
     # ── Cumulative learnings aggregation ─────────────────────────────
     try:
         # Load all historical daily reflections
