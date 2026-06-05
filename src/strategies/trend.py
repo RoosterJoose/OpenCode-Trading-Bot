@@ -267,9 +267,11 @@ class TrendFollow(PerpStrategy):
 
         if is_short:
             if current_price >= chandelier:
+                self._cooldowns[asset] = self.cooldown_cycles
                 return "chandelier", current_price
         else:
             if current_price <= chandelier:
+                self._cooldowns[asset] = self.cooldown_cycles
                 return "chandelier", current_price
 
         fast = self._ema(candles, self.fast_period)
