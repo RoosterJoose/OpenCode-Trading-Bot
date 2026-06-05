@@ -81,36 +81,38 @@ def main(db_path: str):
 
         if rows:
             total_trades = len(rows)
-            if total_trades >= 500:
+            if total_trades >= 200:
                 check("trade_count", False,
-                      f"{total_trades} total — possible flip-loop")
-            elif total_trades >= 200:
+                      f"{total_trades} total — excessive churn")
+            elif total_trades >= 100:
                 warn("trade_count", f"{total_trades} recent trades — high activity")
             else:
                 check("trade_count", True, f"{total_trades} total")
 
-            # Per-asset trade counts in last 24h
+            # Per-asset consecutive loss tracking (NotebookLM: 3-5 losses → flip-loop)
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
             recent = [r for r in rows if str(r["exit_time"] or "") >= cutoff[:19]]
 
             asset_counts = defaultdict(int)
             asset_no_strategy = defaultdict(int)
-            asset_flips = defaultdict(int)
-            for r in recent:
+            asset_consecutive_losses: dict[str, int] = defaultdict(int)
+            # Track consecutive losses per asset by iterating recent trades in chronological order
+            for r in reversed(recent):  # oldest first
                 asset = r["asset"]
                 asset_counts[asset] += 1
                 strat = r["strategy"]
                 if not strat:
                     asset_no_strategy[asset] += 1
-                # Detect flips: same asset, alternating side
-                # (simplified: check if trade count per asset exceeds reasonable rate)
-                if asset_counts[asset] >= 10:
-                    asset_flips[asset] = asset_counts[asset]
+                pnl = float(r["pnl_dollars"] or 0)
+                if pnl < 0:
+                    asset_consecutive_losses[asset] += 1
+                else:
+                    asset_consecutive_losses[asset] = 0
 
-            for asset, count in asset_counts.items():
-                if count >= 30:
-                    warn(f"rapid_trading_{asset}",
-                         f"{count} trades in last 24h — possible flip-loop")
+            for asset, consecutive_losses in asset_consecutive_losses.items():
+                if consecutive_losses >= 3:
+                    warn(f"flip_loop_{asset}",
+                         f"{consecutive_losses} consecutive losses — possible flip-loop (pause needed)")
                 if asset_no_strategy.get(asset, 0) >= 5:
                     warn(f"no_strategy_trades_{asset}",
                          f"{asset_no_strategy[asset]} trades without strategy attribution")
@@ -133,8 +135,8 @@ def main(db_path: str):
                     warn("unattributed_trades",
                          f"{len(pnls)} unattributed trades exist")
 
-            check("trade_quality", len(recent) < 500,
-                  f"{len(recent)} trades in last 24h (threshold: 500)")
+            check("trade_quality", len(recent) < 200,
+                  f"{len(recent)} trades in last 24h (threshold: 200)")
         else:
             check("trade_count", True, "0 trades")
     except Exception as e:
