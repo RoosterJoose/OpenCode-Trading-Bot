@@ -41,8 +41,24 @@ ASSET_TO_PRODUCT: dict[str, str] = {
     "LTC": "LTC-PERP-INTX",
     "NEAR": "NEAR-PERP-INTX",
     "SUI": "SUI-PERP-INTX",
+    "HYPE": "HYPE-PERP-INTX",
+    "XLM": "XLM-PERP-INTX",
+    "ZEC": "ZEC-PERP-INTX",
+    "BCH": "BCH-PERP-INTX",
+    "TON": "TON-PERP-INTX",
+    "HBAR": "HBAR-PERP-INTX",
+    "DOT": "DOT-PERP-INTX",
+    "TRUMP": "TRUMP-PERP-INTX",
+    "UNI": "UNI-PERP-INTX",
+    "ALGO": "ALGO-PERP-INTX",
+    "ICP": "ICP-PERP-INTX",
+    "TAO": "TAO-PERP-INTX",
+    "RUNE": "RUNE-PERP-INTX",
+    "OP": "OP-PERP-INTX",
+    "ARB": "ARB-PERP-INTX",
+    "PEPE": "1000PEPE-PERP-INTX",
+    "BONK": "1000BONK-PERP-INTX",
 }
-
 PRODUCT_TO_ASSET = {v: k for k, v in ASSET_TO_PRODUCT.items()}
 
 

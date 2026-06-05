@@ -37,8 +37,11 @@ DEFAULT_CONFIG = {
     },
     "strategies": {
         "mean_reversion": {
-            "assets": ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK",
-                        "AAVE", "FIL", "INJ", "LTC", "NEAR", "SUI"],
+            "assets": [
+                "BTC", "ETH", "BNB", "XRP", "SOL", "HYPE", "DOGE", "XLM", "ADA", "ZEC",
+                "LINK", "BCH", "TON", "HBAR", "LTC", "AVAX", "SUI", "NEAR", "DOT", "TRUMP",
+                "AAVE", "UNI", "FIL", "INJ", "ALGO", "ICP", "TAO", "RUNE", "OP", "ARB",
+            ],
         },
     },
 }

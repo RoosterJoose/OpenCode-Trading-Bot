@@ -1,5 +1,5 @@
 """
-Main trading loop — perps with semi-auto mode.
+Main trading loop — Hyperliquid perps with semi-auto mode.
 
 60s cadence:
   1. Fetch market data (prices, candels, funding, OI) for universe
@@ -265,6 +265,7 @@ class TradingLoop:
                 permit_info = await self._altfins.check_permit_usage()
             snapshot = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
+                "prices": dict(getattr(exchange, "_prices", {})),
                 "funding": dict(exchange._funding_rates),
                 "oi": dict(exchange._open_interest),
                 "oi_velocity": {
