@@ -10,6 +10,7 @@ Uses NotebookLM-verified parameters:
 """
 
 import math
+from collections import defaultdict
 from typing import Optional
 
 from src.core.types import PerpCandle, PerpPosition, RegimeType, Side, Signal
@@ -41,6 +42,7 @@ class MeanReversion(PerpStrategy):
         self.majors = majors or {"BTC", "ETH"}
         self.signal_tracker = signal_tracker
         self._cooldowns: dict[str, int] = {}
+        self._rsi_history: dict[str, list[float]] = defaultdict(lambda: [])
 
     def name(self) -> str:
         return "mr"
@@ -75,8 +77,15 @@ class MeanReversion(PerpStrategy):
                 return None
 
         rsi = self._rsi(candles)
-        is_oversold = rsi is not None and rsi <= self.rsi_oversold
-        is_overbought = rsi is not None and rsi >= (100 - self.rsi_oversold)
+        if rsi is not None:
+            history = self._rsi_history[asset]
+            history.append(rsi)
+            if len(history) > 336:
+                history.pop(0)
+
+        oversold_th, overbought_th = self._dynamic_rsi_thresholds(asset)
+        is_oversold = rsi is not None and rsi <= oversold_th
+        is_overbought = rsi is not None and rsi >= overbought_th
         if not is_oversold and not is_overbought:
             return None
         is_long = is_oversold
@@ -230,6 +239,20 @@ class MeanReversion(PerpStrategy):
                 return "funding_spike", current_price
 
         return None
+
+    # ── Dynamic RSI thresholds (NotebookLM: per-asset rolling percentiles) ──
+
+    def _dynamic_rsi_thresholds(self, asset: str) -> tuple[float, float]:
+        history = self._rsi_history.get(asset, [])
+        if len(history) < 50:
+            return self.rsi_oversold, 100 - self.rsi_oversold
+        sorted_vals = sorted(history)
+        n = len(sorted_vals)
+        p5 = sorted_vals[int(n * 0.05)]
+        p95 = sorted_vals[int(n * 0.95)]
+        oversold = max(15.0, min(35.0, p5))
+        overbought = min(85.0, max(65.0, p95))
+        return oversold, overbought
 
     def _rsi(self, candles: list[PerpCandle]) -> Optional[float]:
         if len(candles) < self.rsi_period + 1:
