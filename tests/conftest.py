@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.adapters.hyperliquid import HyperliquidAdapter
+from src.adapters._hyperliquid_deprecated import HyperliquidAdapter
 
 
 @pytest.fixture

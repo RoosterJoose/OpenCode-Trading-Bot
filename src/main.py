@@ -2,8 +2,8 @@
 Entry point — loads config, sets up logging, starts the trading loop.
 
 Usage:
-  export HERMES_HYPERLIQUID__WALLET="0x..."
-  export HERMES_HYPERLIQUID__PRIVATE_KEY="..."
+  export HERMES_COINBASE__API_KEY_ID="organizations/.../apiKeys/..."
+  export HERMES_COINBASE__PRIVATE_KEY="-----BEGIN EC PRIVATE KEY-----..."
   python -m src.main
 
 Or with env vars for paper-only (no keys needed):
@@ -30,14 +30,15 @@ DEFAULT_CONFIG = {
     "exchange": {"initial_balance": 10_000.0},
     "store": {"path": "hermes.db"},
     "signal_tracker": {"path": "signals.json"},
-    "hyperliquid": {
-        "wallet": "",
+    "coinbase": {
+        "api_key_id": "",
         "private_key": "",
-        "testnet": False,
+        "portfolio_uuid": "",
     },
     "strategies": {
         "mean_reversion": {
-            "assets": ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT"],
+            "assets": ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK",
+                        "AAVE", "FIL", "INJ", "LTC", "NEAR", "SUI"],
         },
     },
 }
@@ -96,12 +97,12 @@ def main():
     data_dir = args.data_dir.resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    wallet = config.get("hyperliquid", {}).get("wallet", "")
-    mode = "paper" if not wallet else "live"
+    api_key_id = config.get("coinbase", {}).get("api_key_id", "")
+    mode = "paper" if not api_key_id else "live"
     logger = logging.getLogger("hermes")
 
     logger.info("=" * 50)
-    logger.info("Hermes v2 — Hyperliquid Perpetual Futures Bot")
+    logger.info("Hermes v2 — Coinbase Perpetual Futures Bot")
     logger.info("Mode: %s | Data: %s", mode, data_dir)
     logger.info("Assets: %s", config["strategies"]["mean_reversion"]["assets"])
     logger.info("Initial balance: $%.0f", config["exchange"]["initial_balance"])

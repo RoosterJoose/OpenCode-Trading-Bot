@@ -25,7 +25,8 @@ from pathlib import Path
 from typing import Optional
 
 from src.adapters.altfins import AltfinsAdapter
-from src.adapters.hyperliquid import HyperliquidAdapter
+from src.adapters.base import ExchangeAdapter
+from src.adapters.coinbase_advanced import CoinbaseAdvancedAdapter
 from src.adapters.paper_perp import PaperPerpExchange
 from src.core.intents import TradeIntent
 from src.core.perp_risk import PerpRiskManager
@@ -47,8 +48,8 @@ from src.strategies.trend import TrendFollow
 
 logger = logging.getLogger("hermes.loop")
 
-ASSET_UNIVERSE = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT",
-                    "LTC", "NEAR", "ATOM", "UNI", "ARB", "OP", "APT", "SUI", "AAVE", "INJ"]
+ASSET_UNIVERSE = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK",
+                    "LTC", "NEAR", "SUI", "AAVE", "INJ", "FIL"]
 MIN_ENTRY_CONFIDENCE = 0.70
 
 
@@ -106,10 +107,10 @@ class TradingLoop:
         if saved_peak:
             self.risk.peak_equity = max(float(saved_peak), initial)
             self.risk.current_equity = initial
-        hl = HyperliquidAdapter(
-            wallet_address=self.config.get("hyperliquid", {}).get("wallet", ""),
-            private_key=self.config.get("hyperliquid", {}).get("private_key", ""),
-            testnet=bool(self.config.get("hyperliquid", {}).get("testnet", False)),
+        hl = CoinbaseAdvancedAdapter(
+            api_key_id=self.config.get("coinbase", {}).get("api_key_id", ""),
+            private_key=self.config.get("coinbase", {}).get("private_key", ""),
+            portfolio_uuid=self.config.get("coinbase", {}).get("portfolio_uuid", ""),
         )
 
         loop = asyncio.get_event_loop()
@@ -128,7 +129,7 @@ class TradingLoop:
 
         ws_task = asyncio.create_task(hl.connect_ws())
 
-        logger.info("=== Hermes v2 — Hyperliquid Perps ===")
+        logger.info("=== Hermes v2 — Coinbase Perps ===")
         logger.info("Assets: %s | Strategies: MR + Trend | Mode: semi-auto", len(self.assets))
 
         while self.running and not self._stop_event.is_set():
@@ -171,7 +172,7 @@ class TradingLoop:
                     pass
                 logger.debug("intent import %s: %s", f.name, e)
 
-    async def _cycle(self, hl: HyperliquidAdapter, exchange: PaperPerpExchange):
+    async def _cycle(self, hl: ExchangeAdapter, exchange: PaperPerpExchange):
         if self._cycle_count % 5 == 0:
             logger.info("heartbeat cycle=%d", self._cycle_count)
         self._import_file_intents()
@@ -333,13 +334,13 @@ class TradingLoop:
         self,
         asset: str,
         candles: list[PerpCandle],
-        hl: HyperliquidAdapter,
+        hl: ExchangeAdapter,
         exchange: PaperPerpExchange,
     ):
         pos = await exchange.fetch_position(asset)
         price = await exchange.fetch_price(asset)
 
-        funding_rate = hl._latest_funding.get(asset, 0.0)
+        funding_rate = await hl.get_funding_rate(asset)
         oi_vel = self.risk.oi_velocity(asset)
         altfins_sigs = self.signal_cache.get(asset, [])
 
@@ -472,7 +473,7 @@ class TradingLoop:
                 self.store.put_state("pending_param_changes", self._suggested_params)
                 logger.info("PENDING PARAM CHANGES: %d suggestions", len(self._suggested_params))
 
-    async def _process_external_intents(self, exchange: PaperPerpExchange, hl: HyperliquidAdapter):
+    async def _process_external_intents(self, exchange: PaperPerpExchange, hl: ExchangeAdapter):
         for row in self.store.pending_intents(limit=25):
             try:
                 intent = TradeIntent.from_row(row)
@@ -483,7 +484,7 @@ class TradingLoop:
             except Exception as e:
                 self.store.update_intent_status(int(row["id"]), "rejected", f"invalid_intent: {e}")
 
-    async def _execute_intent(self, intent: TradeIntent, exchange: PaperPerpExchange, hl: HyperliquidAdapter) -> tuple[bool, str]:
+    async def _execute_intent(self, intent: TradeIntent, exchange: PaperPerpExchange, hl: ExchangeAdapter) -> tuple[bool, str]:
         now = datetime.now(timezone.utc)
         if now >= intent.expires_at:
             return False, "expired"
@@ -507,7 +508,7 @@ class TradingLoop:
         oi_ok, oi_msg = self.risk.oi_gate_allows(intent.asset)
         if not oi_ok:
             return False, oi_msg
-        funding_rate = hl._latest_funding.get(intent.asset, 0.0)
+        funding_rate = await hl.get_funding_rate(intent.asset)
         funding_ok, funding_msg = self.risk.funding_gate(funding_rate)
         if not funding_ok:
             return False, funding_msg

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.adapters.base import ExchangeAdapter
-from src.adapters.hyperliquid import HyperliquidAdapter
+from src.adapters._hyperliquid_deprecated import HyperliquidAdapter
 from src.core.types import MarketSnapshot, Order, OrderType, PerpCandle, PerpConfig, Side
 
 
