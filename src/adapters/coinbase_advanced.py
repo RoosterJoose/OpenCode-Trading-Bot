@@ -22,6 +22,9 @@ logger = logging.getLogger("hermes.coinbase")
 API_BASE = "https://api.coinbase.com"
 API_PREFIX = "/api/v3/brokerage"
 
+MAX_RETRIES = 3
+BASE_RETRY_DELAY = 1.0  # seconds
+
 ASSET_TO_PRODUCT: dict[str, str] = {
     "BTC": "BTC-PERP-INTX",
     "ETH": "ETH-PERP-INTX",
@@ -63,6 +66,11 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
         self._perp_configs: dict[str, PerpConfig] = {}
         self._candle_cache: dict[str, list[PerpCandle]] = defaultdict(list)
 
+        # Rate limit tracking
+        self._request_count: int = 0
+        self._last_429_time: float = 0.0
+        self._consecutive_429s: int = 0
+
     # ── JWT helper ────────────────────────────────────────────────────────
 
     def _make_jwt(self, uri: str) -> str:
@@ -85,9 +93,35 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
         token = self._make_jwt(uri)
         headers = {"Authorization": f"Bearer {token}"}
         url = f"{API_BASE}{API_PREFIX}{path}"
-        resp = await self._http.request(method, url, headers=headers, params=params)
-        resp.raise_for_status()
-        return resp.json()
+
+        last_exc = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                resp = await self._http.request(method, url, headers=headers, params=params)
+                self._request_count += 1
+                if resp.status_code == 429:
+                    self._consecutive_429s += 1
+                    self._last_429_time = time.time()
+                    delay = BASE_RETRY_DELAY * (2 ** attempt) * min(self._consecutive_429s, 5)
+                    logger.warning("Coinbase 429 (attempt %d/%d): retrying in %.1fs", attempt + 1, MAX_RETRIES, delay)
+                    await asyncio.sleep(delay)
+                    continue
+                self._consecutive_429s = 0
+                resp.raise_for_status()
+                return resp.json()
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429:
+                    continue  # handled above
+                raise
+            except (httpx.TimeoutException, httpx.NetworkError) as e:
+                last_exc = e
+                delay = BASE_RETRY_DELAY * (2 ** attempt)
+                logger.warning("Coinbase request failed (attempt %d/%d): %s — retrying in %.1fs", attempt + 1, MAX_RETRIES, e, delay)
+                await asyncio.sleep(delay)
+
+        if last_exc:
+            raise last_exc
+        raise httpx.HTTPStatusError(f"Exhausted retries for {method} {path}", request=None, response=resp)
 
     def _product_id(self, asset: str) -> str:
         return ASSET_TO_PRODUCT.get(asset, f"{asset}-PERP-INTX")
@@ -345,3 +379,13 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
             return resp.status_code == 200
         except Exception:
             return False
+
+    # ── Rate limit stats ─────────────────────────────────────────────
+
+    @property
+    def request_count(self) -> int:
+        return self._request_count
+
+    @property
+    def rate_limited(self) -> bool:
+        return self._consecutive_429s > 0

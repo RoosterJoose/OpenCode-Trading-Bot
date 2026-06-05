@@ -194,7 +194,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                   "win_rate": 0, "profit_factor": 0, "sharpe": 0, "gross_exposure": 0, "effective_leverage": 0, "allow_entry": True,
                   "altfins_permits": altfins_permits,
                   "altfins_signal_count": snapshot.get("altfins_signal_count", 0),
-                  "snapshot_age": None}
+                  "snapshot_age": None,
+                  "coinbase_requests": snapshot.get("coinbase_requests", 0),
+                  "coinbase_rate_limited": snapshot.get("coinbase_rate_limited", False)}
         try:
             row = conn.execute("SELECT equity, peak_equity FROM equity_snapshots ORDER BY id DESC LIMIT 1").fetchone()
             if row:

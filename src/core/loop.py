@@ -275,6 +275,8 @@ class TradingLoop:
                 "altfins_signals": altfins_signals[:50],
                 "altfins_indicators": altfins_indicators,
                 "altfins_permits": permit_info,
+                "coinbase_requests": getattr(hl, "request_count", 0),
+                "coinbase_rate_limited": getattr(hl, "_consecutive_429s", 0) > 0,
             }
             snapshot_path = self.data_dir / "external_snapshot.json"
             tmp = snapshot_path.with_suffix(".json.tmp")
