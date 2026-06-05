@@ -6,7 +6,6 @@ Products are on INTX venue with PERPETUAL expiry type.
 """
 
 import asyncio
-import json
 import logging
 import time
 from collections import defaultdict
