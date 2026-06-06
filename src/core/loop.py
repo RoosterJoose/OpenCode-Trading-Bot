@@ -412,26 +412,39 @@ class TradingLoop:
 
         # Infer regime
         regime = self._infer_regime(candles)
+        if asset in self.assets[:3]:
+            logger.info("Regime %s: %s (ADX=%.1f, norm_vol=%.2f%%)",
+                         asset, regime.value, self._adx(candles) if len(candles) >= 14 else 0,
+                         (sum(max(c.high-c.low, abs(c.high-candles[i-1].close if i>0 else 0), abs(c.low-candles[i-1].close if i>0 else 0)) for i,c in enumerate(candles[-14:]))/14/candles[-1].close*100) if len(candles)>=15 else 0)
+        if asset in self.assets[:3]:
+            logger.info("Regime %s: %s (ADX=%.1f, norm_vol=%.2f%%)",
+                         asset, regime.value, self._adx(candles) if len(candles) >= 14 else 0,
+                         (sum(max(c.high-c.low, abs(c.high-candles[i-1].close if i>0 else 0), abs(c.low-candles[i-1].close if i>0 else 0)) for i,c in enumerate(candles[-14:]))/14/candles[-1].close*100) if len(candles)>=15 else 0)
 
         # Dead market — skip entries entirely
         if regime == RegimeType.DEAD_MARKET and not pos:
+            logger.info("Gate %s DEAD_MARKET — skipping entry", asset)
             return
 
         # Check risk gates
         risk_ok, risk_msg = self.risk.allow_entry(exchange.gross_exposure, exchange.effective_leverage)
         if not risk_ok:
+            logger.info("Gate %s risk: %s", asset, risk_msg)
             return
 
         oi_ok, oi_msg = self.risk.oi_gate_allows(asset)
         if not oi_ok:
+            logger.info("Gate %s OI: %s", asset, oi_msg)
             return
 
         funding_ok, funding_msg = self.risk.funding_gate(funding_rate)
         if not funding_ok:
+            logger.info("Gate %s funding: %s", asset, funding_msg)
             return
 
         cl_ok, cl_msg = self.risk.consecutive_loss_allows(asset)
         if not cl_ok:
+            logger.info("Gate %s consec_loss: %s", asset, cl_msg)
             return
 
         # Evaluate entries
@@ -449,6 +462,7 @@ class TradingLoop:
 
             result = strat.should_enter(asset, candles, all_signals, regime, pos, funding_rate)
             if result is None:
+                logger.debug("%s %s: no setup (regime=%s)", strat.name(), asset, regime.value)
                 continue
 
             side, confidence, meta = result

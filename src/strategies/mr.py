@@ -11,6 +11,8 @@ Uses NotebookLM-verified parameters:
 
 import math
 from collections import defaultdict
+import logging
+logger = logging.getLogger(__name__)
 from typing import Optional
 
 from src.core.types import PerpCandle, PerpPosition, RegimeType, Side, Signal
@@ -58,10 +60,13 @@ class MeanReversion(PerpStrategy):
     ) -> Optional[tuple[Side, float, dict]]:
         if self._cooldowns.get(asset, 0) > 0:
             self._cooldowns[asset] -= 1
+            logger.info("MR %s: cooldown=%d", asset, self._cooldowns.get(asset, 0))
             return None
         if position is not None:
+            logger.info("MR %s: has position", asset)
             return None
         if len(candles) < 50:
+            logger.info("MR %s: only %d candles", asset, len(candles))
             return None
 
         last = candles[-1]
@@ -69,6 +74,7 @@ class MeanReversion(PerpStrategy):
             return None
 
         if regime in (RegimeType.STRONGLY_TRENDING, RegimeType.HIGH_VOL):
+            logger.info("MR %s: regime=%s blocked", asset, regime.value)
             return None
 
         # Microstructure filters (NotebookLM: Hurst stability, VR test, autocorrelation)
@@ -87,14 +93,17 @@ class MeanReversion(PerpStrategy):
         is_oversold = rsi is not None and rsi <= oversold_th
         is_overbought = rsi is not None and rsi >= overbought_th
         if not is_oversold and not is_overbought:
+            logger.info("MR %s: RSI=%.1f not extreme", asset, rsi)
             return None
         is_long = is_oversold
 
         # Asset-specific drift regime (NotebookLM: >60% directional days)
         drift = self._asset_drift(candles)
         if drift == "bullish_drift" and not is_long:
+            logger.info("MR %s: bullish drift blocks short", asset)
             return None
         if drift == "bearish_drift" and is_long:
+            logger.info("MR %s: bearish drift blocks long", asset)
             return None
 
         entry_price = last.close

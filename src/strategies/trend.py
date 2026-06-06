@@ -6,6 +6,8 @@ switching to Parabolic SAR for exits after 48h to lock in profits.
 Cooldown between trend entries to avoid whipsaw.
 """
 
+import logging
+logger = logging.getLogger(__name__)
 from typing import Optional
 from datetime import datetime, timezone
 
@@ -67,13 +69,17 @@ class TrendFollow(PerpStrategy):
     ) -> Optional[tuple[Side, float, dict]]:
         if self._cooldowns.get(asset, 0) > 0:
             self._cooldowns[asset] -= 1
+            logger.info("TREND %s: cooldown=%d", asset, self._cooldowns.get(asset, 0))
             return None
         if position is not None:
+            logger.info("TREND %s: has position", asset)
             return None
         if len(candles) < self.slow_period + self.adx_period + 5:
+            logger.info("TREND %s: only %d candles", asset, len(candles))
             return None
 
         if regime not in (RegimeType.TRENDING, RegimeType.STRONGLY_TRENDING):
+            logger.info("TREND %s: regime=%s", asset, regime.value)
             return None
 
         last = candles[-1]
@@ -104,20 +110,24 @@ class TrendFollow(PerpStrategy):
         near_ema = abs(last.close - ema_fast) / ema_fast <= 0.04 if ema_fast else False
         if not cross_above and not (continuation_long and near_ema):
             if not cross_below and not (continuation_short and near_ema):
+                logger.info("TREND %s: no EMA cross (f=%.2f s=%.2f)", asset, ema_fast, ema_slow)
                 return None
 
         # Asset-specific drift regime (NotebookLM: >60% directional days)
         drift = self._asset_drift(candles)
         is_long_signal = cross_above or (continuation_long and near_ema)
         if drift == "bullish_drift" and not is_long_signal:
+            logger.info("TREND %s: bullish drift blocks short", asset)
             return None
         if drift == "bearish_drift" and is_long_signal:
+            logger.info("TREND %s: bearish drift blocks long", asset)
             return None
 
         adx = self._adx(candles)
         adx_ok = adx is not None and adx >= self.adx_threshold
         hurst_override = regime == RegimeType.STRONGLY_TRENDING and (adx is None or adx < self.adx_threshold)
         if not adx_ok and not hurst_override:
+            logger.info("TREND %s: ADX=%.1f<%.0f", asset, adx, self.adx_threshold)
             return None
 
         atr = self._atr(candles)
