@@ -62,7 +62,7 @@ HTML = """<!DOCTYPE html>
   <aside class="side">
     <div class="brand"><div class="logo"></div><div><h1>HERMES</h1><span>TRADING BOT</span></div></div>
     <nav class="nav">
-      <a class="active" href="#overview"><span class="ico">⌂</span>Overview</a><a href="#markets"><span class="ico">◎</span>Markets</a><a href="#strategies"><span class="ico">⌘</span>Strategies</a><a href="#positions"><span class="ico">▣</span>Positions</a><a href="#risk"><span class="ico">◇</span>Risk</a><a href="#journal"><span class="ico">☷</span>Journal</a><a href="#analytics"><span class="ico">▥</span>Analytics</a>
+      <a class="active" href="#overview"><span class="ico">⌂</span>Overview</a><a href="#markets"><span class="ico">◎</span>Markets</a><a href="#strategies"><span class="ico">⌘</span>Strategies</a><a href="#positions"><span class="ico">▣</span>Positions</a><a href="#risk"><span class="ico">◇</span>Risk</a><a href="#journal"><span class="ico">☷</span>Journal</a><a href="#analytics"><span class="ico">▥</span>Analytics</a><a href="#closed"><span class="ico">⊞</span>Closed</a>
     </nav>
     <div class="botbox"><div class="row"><span>Bot Status</span><b><i class="dot"></i> Running</b></div><div class="row"><span>Mode</span><b id="side-mode">Paper</b></div><div class="row"><span>Altfins Permits</span><b id="altfins-permits">—</b></div><div class="row"><span>Server</span><b>Oracle US-East</b></div><div class="row"><span>Refresh</span><b>15 sec</b></div></div>
   </aside>
@@ -99,7 +99,7 @@ HTML = """<!DOCTYPE html>
   </main>
 </div>
 <script>
-const ASSETS=['BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','LINK','DOT','LTC','NEAR','ATOM','UNI','ARB','OP','APT','SUI','AAVE','INJ'];let state={status:{},trades:[],positions:[],equity:[],signals:[],reflection:{},markets:[],range:'1M',query:'',learnings:{},health:{}};
+const ASSETS=['BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','LINK','DOT','LTC','NEAR','ATOM','UNI','ARB','OP','APT','SUI','AAVE','INJ'];let state={status:{},trades:[],positions:[],equity:[],signals:[],reflection:{},markets:[],range:'1M',query:'',learnings:{},health:{},closedPositions:[]};
 const fmtUSD=n=>'$'+Number(n||0).toLocaleString(undefined,{maximumFractionDigits:2});const pct=n=>(Number(n||0)>=0?'+':'')+Number(n||0).toFixed(2)+'%';const cls=n=>Number(n||0)>=0?'positive':'negative';
 function now(){const d=new Date();document.getElementById('today').textContent=d.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'});document.getElementById('clock').textContent=d.toISOString().slice(11,19)}setInterval(now,1000);now();
 function drawLine(id, pts, color='#1d9bff', fill=true){const c=document.getElementById(id);if(!c)return;const r=c.getBoundingClientRect();c.width=Math.max(40,r.width*devicePixelRatio);c.height=Math.max(28,r.height*devicePixelRatio);const x=c.getContext('2d');x.scale(devicePixelRatio,devicePixelRatio);const w=r.width,h=r.height;x.clearRect(0,0,w,h);if(!pts||pts.length<2){pts=[0,1,0.6,1.4,1.2,1.8]}const min=Math.min(...pts),max=Math.max(...pts),rng=max-min||1;x.beginPath();pts.forEach((p,i)=>{const xx=i/(pts.length-1)*w;const yy=h-8-((p-min)/rng)*(h-16);i?x.lineTo(xx,yy):x.moveTo(xx,yy)});x.strokeStyle=color;x.lineWidth=2;x.stroke();if(fill){x.lineTo(w,h);x.lineTo(0,h);x.closePath();const g=x.createLinearGradient(0,0,0,h);g.addColorStop(0,color+'55');g.addColorStop(1,color+'00');x.fillStyle=g;x.fill()}}
@@ -112,9 +112,10 @@ function renderWatchlist(){const q=state.query.toUpperCase();const markets=(stat
 function renderActivity(){const sigs=state.signals.slice(-8).reverse();const acts=[...sigs.map(s=>({t:(s.time||'').slice(11,16),b:'Signal Detected',d:(s.side||'').toUpperCase()+' '+s.asset+' '+(s.strategy||'')+' conf '+Math.round((s.confidence||0)*100)+'%'})),...state.trades.slice(0,4).map(t=>({t:(t.exit_time||'').slice(11,16),b:'Trade Closed',d:t.asset+' '+(Number(t.pnl_pct||0)>=0?'+':'')+Number(t.pnl_pct||0).toFixed(2)+'%'}))];document.getElementById('activity').innerHTML=(acts.length?acts:[{t:'now',b:'System Nominal',d:'Heartbeat, dashboard, and health timer active.'}]).slice(0,6).map(a=>'<div class="event"><small>'+a.t+'</small><div class="pin"></div><div><b>'+a.b+'</b><span class="sub">'+a.d+'</span></div></div>').join('')}
 function renderReflection(){const r=state.reflection;let html='<p><b>Today&#39;s Summary</b></p><p class="sub">Paper mode active. Local TA and Altfins metrics are both feeding entry confidence. Health checks restart the bot if snapshots go stale.</p>';if(r&&r.suggestions&&r.suggestions.length){html+='<p><b>Pending Suggestions</b></p>'+r.suggestions.map(s=>'<p class="sub">'+s.parameter+': '+s.current_value+' → '+s.suggested_value+'</p>').join('')}else html+='<p><b>Key Lesson</b></p><p class="sub">Reflection runs after enough closed paper trades.</p>';document.getElementById('reflection').innerHTML=html}
 function renderDailyReflection(){const r=state.dailyReflection;if(!r||!r.assets){document.getElementById('daily-reflection').innerHTML='<p class="sub">Waiting for end-of-day data.</p>';return}const sig=r.significant_moves||0;const miss=r.missed_moves||0;const catchable=r.potentially_catchable||0;let html='<p><b>'+r.date+'</b><span class="sub"> · '+r.bias+'</span></p>';html+='<p class="sub">'+sig+' significant moves · '+miss+' missed · '+catchable+' catchable</p>';if(r.learning&&r.learning.length){r.learning.forEach(l=>{if(l.type==='market_summary')return;html+='<div class="badge '+(l.type==='missed_by_config'?'positive':'neutral')+'">'+l.count+'x '+l.reason+'</div><p class="sub">'+l.action+'</p>'})}html+='<div style="max-height:200px;overflow:auto;margin-top:8px">'+r.assets.filter(a=>a.significant).slice(0,10).map(a=>'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border)"><span>'+a.asset+'</span><span class="'+(a.change_24h_pct>=0?'gain':'loss')+'">'+pct(a.change_24h_pct)+'</span></div>').join('')+'</div>';document.getElementById('daily-reflection').innerHTML=html}
+function renderClosedPositions(){const tb=document.getElementById('closed-body');const cp=state.closedPositions||[];document.getElementById('closed-count').textContent=cp.length;if(!cp.length){tb.innerHTML='<tr><td colspan="8" class="empty">No closed positions yet.</td></tr>';return}tb.innerHTML=cp.slice(0,50).map(function(t){var c=t.pnl_dollars>=0?'gain':'loss';var sc=t.side==='long'?'positive':'negative';return '<tr><td>'+t.asset+'</td><td><span class="badge '+sc+'">'+t.side+'</span></td><td>'+t.strategy+'</td><td>'+fmtUSD(t.entry_price)+'</td><td>'+fmtUSD(t.exit_price)+'</td><td class="'+c+'">'+fmtUSD(t.pnl_dollars)+' ('+pct(t.pnl_pct)+')</td><td>'+t.r_multiple.toFixed(2)+'R</td><td>'+t.hold_hours+'h</td></tr>'}).join('')}
 function renderHealth(){const h=state.health;if(!h||!h.checks){document.getElementById('daily-health').innerHTML='<p class="sub">Waiting for first health check.</p>';return}let html='<p><b>'+h.date+'</b><span class="badge '+(h.passed?'positive':'negative')+'">'+(h.passed?'PASS':'FAIL')+'</span></p>';if(h.warnings&&h.warnings.length){html+='<p><b>Warnings ('+h.warnings.length+')</b></p>'+h.warnings.slice(0,5).map(w=>'<p class="sub" style="color:var(--orange)">'+w+'</p>').join('')}if(h.failures&&h.failures.length){html+='<p><b>Failures ('+h.failures.length+')</b></p>'+h.failures.slice(0,5).map(f=>'<p class="sub" style="color:var(--red)">'+f+'</p>').join('')}if(!h.warnings.length&&!h.failures.length){html+='<p class="sub" style="color:var(--green)">All checks passed — no warnings.</p>'}document.getElementById('daily-health').innerHTML=html}
 function renderLearnings(){const c=state.learnings&&state.learnings.cumulative;if(!c||!c.total_days){document.getElementById('learnings').innerHTML='<p class="sub">Learning accumulation starts after multiple days of data.</p>';return}let html='<p><b>'+c.total_days+' days tracked</b><span class="sub"> · last update '+c.last_updated.slice(0,10)+'</span></p>';if(c.lessons&&c.lessons.length){html+=c.lessons.map(l=>'<div class="badge neutral">Lesson</div><p class="sub">'+l+'</p>').join('')}if(c.persistent_missed_reasons&&c.persistent_missed_reasons.length){html+='<p><b>Persistent Patterns</b></p>'+c.persistent_missed_reasons.slice(0,5).map(r=>'<p class="sub">'+r.reason+': '+r.count+'x</p>').join('')}if(c.most_frequently_bearish&&c.most_frequently_bearish.length){html+='<p><b>Most Bearish Assets</b> <span class="sub">('+c.most_frequently_bearish[0].days+' days)</span></p><div style="display:flex;flex-wrap:wrap;gap:8px">'+c.most_frequently_bearish.slice(0,6).map(a=>'<span class="badge negative">'+a.asset+'</span>').join('')+'</div>'}document.getElementById('learnings').innerHTML=html}
-async function load(){try{const [status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection','/api/markets','/api/daily-reflection','/api/learnings','/api/health'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health};renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection();renderDailyReflection();renderLearnings();renderHealth()}catch(e){console.error(e)}}
+async function load(){try{const [status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection','/api/markets','/api/daily-reflection','/api/learnings','/api/health','/api/closed-positions'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health,closedPositions};renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection();renderDailyReflection();renderLearnings();renderHealth();renderClosedPositions()}catch(e){console.error(e)}}
 document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-range]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.range=b.dataset.range;renderKpis()});document.getElementById('search').addEventListener('input',e=>{state.query=e.target.value;renderWatchlist()});window.addEventListener('resize',()=>renderKpis());load();setInterval(load,60000);
 </script>
 </body>
@@ -160,6 +161,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             "/api/signals": self._api_signals,
             "/api/reflection": self._api_reflection,
             "/api/daily-reflection": self._api_daily_reflection,
+            "/api/closed-positions": self._api_closed_positions,
             "/api/health": self._api_health,
             "/api/learnings": self._api_learnings,
             "/api/lessons": self._api_lessons,
@@ -180,6 +182,47 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         conn = sqlite3.connect(str(self.db_path), timeout=5.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
+
+
+    def _api_closed_positions(self):
+        conn = self._connect()
+        try:
+            rows = conn.execute("SELECT * FROM trades WHERE exit_time IS NOT NULL ORDER BY id DESC LIMIT 100").fetchall()
+            result = []
+            for r in rows:
+                d = dict(r)
+                pnl = float(d.get("pnl_dollars", 0) or 0)
+                pnl_pct = float(d.get("pnl_pct", 0) or 0)
+                entry_price = float(d.get("entry_price", 0) or 0)
+                exit_price = float(d.get("exit_price", 0) or 0)
+                r_mult = float(d.get("r_multiple", 0) or 0)
+                hold_hours = 0
+                if d.get("entry_time") and d.get("exit_time"):
+                    try:
+                        from datetime import datetime, timezone
+                        et = datetime.fromisoformat(d["entry_time"])
+                        xt = datetime.fromisoformat(d["exit_time"])
+                        hold_hours = (xt - et).total_seconds() / 3600
+                    except:
+                        pass
+                result.append({
+                    "asset": d.get("asset", ""),
+                    "side": d.get("side", "long"),
+                    "strategy": d.get("strategy", "unknown"),
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
+                    "entry_time": d.get("entry_time", ""),
+                    "exit_time": d.get("exit_time", ""),
+                    "pnl_dollars": pnl,
+                    "pnl_pct": pnl_pct,
+                    "r_multiple": r_mult,
+                    "hold_hours": round(hold_hours, 1),
+                })
+            self._send_json(result)
+        except Exception:
+            self._send_json([])
+        finally:
+            conn.close()
 
     def _api_status(self):
         conn = self._connect()

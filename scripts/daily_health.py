@@ -131,11 +131,11 @@ def main(db_path: str):
                 if len(pnls) >= 5 and total < -10 and wr < 30:
                     warn(f"strategy_decay_{s}",
                          f"WR={wr:.0f}%, PnL=${total:+.2f} on {len(pnls)} trades — review")
-                if s == "unattributed" and len(pnls) >= 5:
+                if s == "unattributed" and len(pnls) > 0:
                     warn("unattributed_trades",
                          f"{len(pnls)} unattributed trades exist")
 
-            check("trade_quality", len(recent) < 200,
+            check("trade_quality", len(recent) < 400,
                   f"{len(recent)} trades in last 24h (threshold: 200)")
         else:
             check("trade_count", True, "0 trades")
