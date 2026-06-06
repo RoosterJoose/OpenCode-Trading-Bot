@@ -85,6 +85,7 @@ class TradingLoop:
         self.signal_cache: dict[str, list[Signal]] = defaultdict(list)
         self._stop_event = asyncio.Event()
         self._suggested_params: list[dict] = []
+        self._systemic_regime: str | None = None
         self._daily_signals_log: list[dict] = []
         self._altfins_cycle = 0
         self._altfins = None
@@ -128,6 +129,17 @@ class TradingLoop:
             logger.info("Altfins: disabled (no API key)")
 
         ws_task = asyncio.create_task(hl.connect_ws())
+
+        # Backfill candle caches on startup
+        logger.info("Backfilling %d candle caches...", len(self.assets))
+        tasks = [hl.fetch_candles(a, "1h", 200) for a in self.assets]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for asset, candles in zip(self.assets, results):
+            if isinstance(candles, Exception):
+                logger.debug("backfill %s: %s", asset, candles)
+            elif candles:
+                self.candle_cache[asset] = candles
+        logger.info("Candle backfill complete")
 
         logger.info("=== Hermes v2 — Coinbase Perps ===")
         logger.info("Assets: %s | Strategies: MR + Trend | Mode: semi-auto", len(self.assets))
@@ -233,6 +245,34 @@ class TradingLoop:
                 self.risk.record_oi(asset, oi)
         except Exception as e:
             logger.debug("fetch funding/oi: %s", e)
+
+        # 3b. Cross-asset drift — systemic regime detection
+        try:
+            drift_counts = {"bullish": 0, "bearish": 0, "neutral": 0}
+            for asset in self.assets:
+                candles = self.candle_cache.get(asset)
+                if not candles or len(candles) < 168:
+                    drift_counts["neutral"] += 1
+                    continue
+                closes = [c.close for c in candles[-168:]]
+                up_closes = sum(1 for i in range(1, len(closes)) if closes[i] >= closes[i - 1])
+                ratio = up_closes / len(closes)
+                if ratio > 0.6:
+                    drift_counts["bullish"] += 1
+                elif ratio < 0.4:
+                    drift_counts["bearish"] += 1
+                else:
+                    drift_counts["neutral"] += 1
+            total = len(self.assets)
+            dominant = max(drift_counts, key=drift_counts.get)
+            pct = drift_counts[dominant] / total * 100 if total > 0 else 0
+            self._systemic_regime = dominant if pct > 80 else None
+            if self._systemic_regime:
+                logger.info("Systemic %s regime: %d/%d assets (%.0f%%)",
+                             self._systemic_regime, drift_counts[dominant], total, pct)
+        except Exception as e:
+            logger.debug("drift detection: %s", e)
+            self._systemic_regime = None
 
         # 4. Fetch perp configs
         try:
@@ -398,6 +438,15 @@ class TradingLoop:
         for strat in self.strategies:
             sig_bucket = f"{strat.name()}:{asset}"
             all_signals = altfins_sigs + self.signal_cache.get("all", [])
+            # Systemic regime: block MR, reduce trend cooldown
+            if self._systemic_regime:
+                if strat.name() == "mr":
+                    logger.debug("Skipping MR %s — systemic %s regime", asset, self._systemic_regime)
+                    continue
+                # Trend cooldown halved in systemic regime
+                if hasattr(strat, "_cooldowns") and asset in strat._cooldowns:
+                    strat._cooldowns[asset] = min(strat._cooldowns[asset], 10)
+
             result = strat.should_enter(asset, candles, all_signals, regime, pos, funding_rate)
             if result is None:
                 continue
