@@ -27,9 +27,10 @@ from typing import Any
 # Resolve project root
 _repo = Path(__file__).resolve().parent.parent.parent
 ASSETS = ["BTC", "ETH", "SOL", "XRP", "DOGE",
-           "ADA", "AVAX", "LINK", "DOT", "AAVE",
-           "LTC", "NEAR", "SUI", "BNB", "XLM",
-           "HBAR", "BCH", "ZEC", "PEPE", "SHIB"]
+          "ADA", "AVAX", "LINK", "DOT", "AAVE",
+          "LTC", "NEAR", "SUI", "BNB", "XLM",
+          "HBAR", "BCH", "ZEC", "PEPE", "SHIB",
+          "HYPE", "ONDO", "ENA"]
 _MARKET_CACHE = {"ts": 0.0, "data": []}
 
 HTML = """<!DOCTYPE html>
@@ -100,7 +101,7 @@ HTML = """<!DOCTYPE html>
   </main>
 </div>
 <script>
-const ASSETS=['BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','LINK','DOT','LTC','NEAR','ATOM','UNI','ARB','OP','APT','SUI','AAVE','INJ'];let state={status:{},trades:[],positions:[],equity:[],signals:[],reflection:{},markets:[],range:'1M',query:'',learnings:{},health:{}};
+const ASSETS=['BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','LINK','DOT','AAVE','LTC','NEAR','SUI','XLM','HBAR','BCH','ZEC','PEPE','SHIB','HYPE','ONDO','ENA'];let state={status:{},trades:[],positions:[],equity:[],signals:[],reflection:{},markets:[],range:'1M',query:'',learnings:{},health:{}};
 const fmtUSD=n=>'$'+Number(n||0).toLocaleString(undefined,{maximumFractionDigits:2});const pct=n=>(Number(n||0)>=0?'+':'')+Number(n||0).toFixed(2)+'%';const cls=n=>Number(n||0)>=0?'positive':'negative';
 function now(){const d=new Date();document.getElementById('today').textContent=d.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'});document.getElementById('clock').textContent=d.toISOString().slice(11,19)}setInterval(now,1000);now();
 function drawLine(id, pts, color='#1d9bff', fill=true){const c=document.getElementById(id);if(!c)return;const r=c.getBoundingClientRect();c.width=Math.max(40,r.width*devicePixelRatio);c.height=Math.max(28,r.height*devicePixelRatio);const x=c.getContext('2d');x.scale(devicePixelRatio,devicePixelRatio);const w=r.width,h=r.height;x.clearRect(0,0,w,h);if(!pts||pts.length<2){pts=[0,1,0.6,1.4,1.2,1.8]}const min=Math.min(...pts),max=Math.max(...pts),rng=max-min||1;x.beginPath();pts.forEach((p,i)=>{const xx=i/(pts.length-1)*w;const yy=h-8-((p-min)/rng)*(h-16);i?x.lineTo(xx,yy):x.moveTo(xx,yy)});x.strokeStyle=color;x.lineWidth=2;x.stroke();if(fill){x.lineTo(w,h);x.lineTo(0,h);x.closePath();const g=x.createLinearGradient(0,0,0,h);g.addColorStop(0,color+'55');g.addColorStop(1,color+'00');x.fillStyle=g;x.fill()}}

@@ -50,7 +50,8 @@ from src.strategies.trend import TrendFollow
 logger = logging.getLogger("hermes.loop")
 
 ASSET_UNIVERSE = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK",
-                    "LTC", "NEAR", "SUI", "AAVE", "INJ", "FIL"]
+                    "DOT", "AAVE", "LTC", "NEAR", "SUI", "XLM", "HBAR", "BCH",
+                    "ZEC", "PEPE", "SHIB", "HYPE", "ONDO", "ENA"]
 MIN_ENTRY_CONFIDENCE = 0.70
 
 

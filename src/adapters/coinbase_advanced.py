@@ -36,7 +36,7 @@ ASSET_TO_PRODUCT: dict[str, str] = {
     "SOL": "SLP-20DEC30-CDE",
     "XRP": "XPP-20DEC30-CDE",
     "DOGE": "DOP-20DEC30-CDE",
-    "ADA": "ADA-31JUL26-CDE",
+    "ADA": "ADP-20DEC30-CDE",
     "AVAX": "AVP-20DEC30-CDE",
     "LINK": "LNP-20DEC30-CDE",
     "DOT": "POP-20DEC30-CDE",
@@ -50,7 +50,10 @@ ASSET_TO_PRODUCT: dict[str, str] = {
     "BCH": "BCP-20DEC30-CDE",
     "ZEC": "ZEC-20DEC30-CDE",
     "PEPE": "PEP-20DEC30-CDE",
-    "SHIB": "SHB-31JUL26-CDE",
+    "SHIB": "SHP-20DEC30-CDE",
+    "HYPE": "HYP-20DEC30-CDE",
+    "ONDO": "OND-20DEC30-CDE",
+    "ENA": "ENA-20DEC30-CDE",
 }
 PRODUCT_TO_ASSET: dict[str, str] = {v: k for k, v in ASSET_TO_PRODUCT.items()}
 
