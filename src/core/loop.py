@@ -1,5 +1,5 @@
 """
-Main trading loop — Hyperliquid perps with semi-auto mode.
+Main trading loop — perps with semi-auto mode.
 
 60s cadence:
   1. Fetch market data (prices, candels, funding, OI) for universe
@@ -85,7 +85,6 @@ class TradingLoop:
         self.signal_cache: dict[str, list[Signal]] = defaultdict(list)
         self._stop_event = asyncio.Event()
         self._suggested_params: list[dict] = []
-        self._systemic_regime: str | None = None
         self._daily_signals_log: list[dict] = []
         self._altfins_cycle = 0
         self._altfins = None
@@ -129,17 +128,6 @@ class TradingLoop:
             logger.info("Altfins: disabled (no API key)")
 
         ws_task = asyncio.create_task(hl.connect_ws())
-
-        # Backfill candle caches on startup
-        logger.info("Backfilling %d candle caches...", len(self.assets))
-        tasks = [hl.fetch_candles(a, "1h", 200) for a in self.assets]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for asset, candles in zip(self.assets, results):
-            if isinstance(candles, Exception):
-                logger.debug("backfill %s: %s", asset, candles)
-            elif candles:
-                self.candle_cache[asset] = candles
-        logger.info("Candle backfill complete")
 
         logger.info("=== Hermes v2 — Coinbase Perps ===")
         logger.info("Assets: %s | Strategies: MR + Trend | Mode: semi-auto", len(self.assets))
@@ -199,14 +187,15 @@ class TradingLoop:
         except Exception as e:
             logger.debug("fetch mids: %s", e)
 
-        # 2. Fetch candles
-        for asset in self.assets:
+        # 2. Fetch candles (parallel)
+        async def _fetch_one(asset: str) -> None:
             try:
                 candles = await hl.fetch_candles(asset, "1h", 200)
                 if candles:
                     self.candle_cache[asset] = candles
             except Exception as e:
                 logger.debug("fetch candles %s: %s", asset, e)
+        await asyncio.gather(*[_fetch_one(a) for a in self.assets])
 
         # 2b. Altfins: both calls every 90 min (2 permits/cycle = 960/mo within 1,000 budget)
         self._altfins_cycle += 1
@@ -246,34 +235,6 @@ class TradingLoop:
         except Exception as e:
             logger.debug("fetch funding/oi: %s", e)
 
-        # 3b. Cross-asset drift — systemic regime detection
-        try:
-            drift_counts = {"bullish": 0, "bearish": 0, "neutral": 0}
-            for asset in self.assets:
-                candles = self.candle_cache.get(asset)
-                if not candles or len(candles) < 168:
-                    drift_counts["neutral"] += 1
-                    continue
-                closes = [c.close for c in candles[-168:]]
-                up_closes = sum(1 for i in range(1, len(closes)) if closes[i] >= closes[i - 1])
-                ratio = up_closes / len(closes)
-                if ratio > 0.6:
-                    drift_counts["bullish"] += 1
-                elif ratio < 0.4:
-                    drift_counts["bearish"] += 1
-                else:
-                    drift_counts["neutral"] += 1
-            total = len(self.assets)
-            dominant = max(drift_counts, key=drift_counts.get)
-            pct = drift_counts[dominant] / total * 100 if total > 0 else 0
-            self._systemic_regime = dominant if pct > 80 else None
-            if self._systemic_regime:
-                logger.info("Systemic %s regime: %d/%d assets (%.0f%%)",
-                             self._systemic_regime, drift_counts[dominant], total, pct)
-        except Exception as e:
-            logger.debug("drift detection: %s", e)
-            self._systemic_regime = None
-
         # 4. Fetch perp configs
         try:
             configs = await hl.fetch_metadata()
@@ -305,9 +266,10 @@ class TradingLoop:
                 permit_info = await self._altfins.check_permit_usage()
             snapshot = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "prices": dict(getattr(exchange, "_prices", {})),
-                "funding": dict(exchange._funding_rates),
-                "oi": dict(exchange._open_interest),
+                "prices": dict(getattr(hl, "_latest_prices", {})),
+                "funding": dict(getattr(exchange, "_funding_rates", {})),
+                "oi": dict(getattr(exchange, "_open_interest", {})),
+                "change_24h": dict(getattr(hl, "_latest_changes_24h", {})),
                 "oi_velocity": {
                     a: self.risk.oi_velocity(a)
                     for a in self.assets
@@ -316,11 +278,6 @@ class TradingLoop:
                 "altfins_signals": altfins_signals[:50],
                 "altfins_indicators": altfins_indicators,
                 "altfins_permits": permit_info,
-                "change_24h": {
-                    a: round((c[-1].close - c[-24].close) / c[-24].close * 100, 2)
-                    for a, c in self.candle_cache.items()
-                    if len(c) >= 25
-                },
                 "coinbase_requests": getattr(hl, "request_count", 0),
                 "coinbase_rate_limited": getattr(hl, "_consecutive_429s", 0) > 0,
             }
@@ -412,57 +369,34 @@ class TradingLoop:
 
         # Infer regime
         regime = self._infer_regime(candles)
-        if asset in self.assets[:3]:
-            logger.info("Regime %s: %s (ADX=%.1f, norm_vol=%.2f%%)",
-                         asset, regime.value, self._adx(candles) if len(candles) >= 14 else 0,
-                         (sum(max(c.high-c.low, abs(c.high-candles[i-1].close if i>0 else 0), abs(c.low-candles[i-1].close if i>0 else 0)) for i,c in enumerate(candles[-14:]))/14/candles[-1].close*100) if len(candles)>=15 else 0)
-        if asset in self.assets[:3]:
-            logger.info("Regime %s: %s (ADX=%.1f, norm_vol=%.2f%%)",
-                         asset, regime.value, self._adx(candles) if len(candles) >= 14 else 0,
-                         (sum(max(c.high-c.low, abs(c.high-candles[i-1].close if i>0 else 0), abs(c.low-candles[i-1].close if i>0 else 0)) for i,c in enumerate(candles[-14:]))/14/candles[-1].close*100) if len(candles)>=15 else 0)
 
         # Dead market — skip entries entirely
         if regime == RegimeType.DEAD_MARKET and not pos:
-            logger.info("Gate %s DEAD_MARKET — skipping entry", asset)
             return
 
         # Check risk gates
         risk_ok, risk_msg = self.risk.allow_entry(exchange.gross_exposure, exchange.effective_leverage)
         if not risk_ok:
-            logger.info("Gate %s risk: %s", asset, risk_msg)
             return
 
         oi_ok, oi_msg = self.risk.oi_gate_allows(asset)
         if not oi_ok:
-            logger.info("Gate %s OI: %s", asset, oi_msg)
             return
 
         funding_ok, funding_msg = self.risk.funding_gate(funding_rate)
         if not funding_ok:
-            logger.info("Gate %s funding: %s", asset, funding_msg)
             return
 
         cl_ok, cl_msg = self.risk.consecutive_loss_allows(asset)
         if not cl_ok:
-            logger.info("Gate %s consec_loss: %s", asset, cl_msg)
             return
 
         # Evaluate entries
         for strat in self.strategies:
             sig_bucket = f"{strat.name()}:{asset}"
             all_signals = altfins_sigs + self.signal_cache.get("all", [])
-            # Systemic regime: block MR, reduce trend cooldown
-            if self._systemic_regime:
-                if strat.name() == "mr":
-                    logger.debug("Skipping MR %s — systemic %s regime", asset, self._systemic_regime)
-                    continue
-                # Trend cooldown halved in systemic regime
-                if hasattr(strat, "_cooldowns") and asset in strat._cooldowns:
-                    strat._cooldowns[asset] = min(strat._cooldowns[asset], 10)
-
             result = strat.should_enter(asset, candles, all_signals, regime, pos, funding_rate)
             if result is None:
-                logger.debug("%s %s: no setup (regime=%s)", strat.name(), asset, regime.value)
                 continue
 
             side, confidence, meta = result

@@ -70,6 +70,7 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
         self._latest_prices: dict[str, float] = {}
         self._latest_funding: dict[str, float] = {}
         self._latest_oi: dict[str, float] = {}
+        self._latest_changes_24h: dict[str, float] = {}
         self._perp_configs: dict[str, PerpConfig] = {}
         self._candle_cache: dict[str, list[PerpCandle]] = defaultdict(list)
 
@@ -192,12 +193,12 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
         return self._latest_prices.get(asset)
 
     async def fetch_funding(self) -> dict[str, float]:
-        products = await self._fetch_all_products()
+        products = [p for p in (await self._fetch_all_products()) if p.get("product_id", "") in PRODUCT_TO_ASSET]
         result: dict[str, float] = {}
         has_funding = 0
         for p in products:
             pid = p.get("product_id", "")
-            asset = self._asset_name(pid)
+            asset = PRODUCT_TO_ASSET[pid]
             fut = p.get("future_product_details", {}) or {}
             perp = p.get("perpetual_product_details", {}) or {}
             fr = fut.get("funding_rate", perp.get("funding_rate", 0))
@@ -205,22 +206,19 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
                 rate = float(fr)
             except (ValueError, TypeError):
                 rate = 0.0
-            if asset in ASSET_TO_PRODUCT:
-                result[asset] = rate
-                self._latest_funding[asset] = rate
-                if rate != 0.0:
-                    has_funding += 1
+            result[asset] = rate
+            self._latest_funding[asset] = rate
+            if rate != 0.0:
+                has_funding += 1
         logger.info("fetch_funding: %d/%d monitored assets have funding", has_funding, len(ASSET_TO_PRODUCT))
         return result
 
     async def fetch_all_mids(self) -> dict[str, float]:
-        products = await self._fetch_all_products()
+        products = [p for p in (await self._fetch_all_products()) if p.get("product_id", "") in PRODUCT_TO_ASSET]
         result: dict[str, float] = {}
         for p in products:
             pid = p.get("product_id", "")
-            asset = self._asset_name(pid)
-            if asset not in ASSET_TO_PRODUCT:
-                continue
+            asset = PRODUCT_TO_ASSET[pid]
             price_str = p.get("price", "0")
             try:
                 price = float(price_str)
@@ -229,18 +227,22 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
             if price > 0:
                 result[asset] = price
                 self._latest_prices[asset] = price
+            change_str = p.get("price_percentage_change_24h", "0")
+            try:
+                change = float(change_str.replace("%", ""))
+            except (ValueError, TypeError):
+                change = 0.0
+            self._latest_changes_24h[asset] = change
         if not result:
             logger.warning("fetch_all_mids: 0/%d monitored assets priced", len(ASSET_TO_PRODUCT))
         return result
 
     async def fetch_open_interest(self) -> dict[str, float]:
-        products = await self._fetch_all_products()
+        products = [p for p in (await self._fetch_all_products()) if p.get("product_id", "") in PRODUCT_TO_ASSET]
         result: dict[str, float] = {}
         for p in products:
             pid = p.get("product_id", "")
-            asset = self._asset_name(pid)
-            if asset not in ASSET_TO_PRODUCT:
-                continue
+            asset = PRODUCT_TO_ASSET[pid]
             fut = p.get("future_product_details", {}) or {}
             perp = p.get("perpetual_product_details", {}) or {}
             oi = float(fut.get("open_interest", perp.get("open_interest", 0)))
@@ -251,13 +253,11 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
     async def fetch_metadata(self) -> dict[str, PerpConfig]:
         if self._perp_configs:
             return self._perp_configs
-        products = await self._fetch_all_products()
+        products = [p for p in (await self._fetch_all_products()) if p.get("product_id", "") in PRODUCT_TO_ASSET]
         configs: dict[str, PerpConfig] = {}
         for p in products:
             pid = p.get("product_id", "")
-            asset = self._asset_name(pid)
-            if asset not in ASSET_TO_PRODUCT:
-                continue
+            asset = PRODUCT_TO_ASSET[pid]
             fut = p.get("future_product_details", {}) or {}
             perp = p.get("perpetual_product_details", {}) or {}
             perpetual_details = fut.get("perpetual_details", {}) or {}

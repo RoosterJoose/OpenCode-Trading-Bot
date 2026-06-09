@@ -272,6 +272,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             funding = snapshot.get("funding", {})
             oi = snapshot.get("oi", {})
             prices = snapshot.get("prices", {})
+            changes_24h = snapshot.get("change_24h", {})
 
             assets_in_data = set(list(funding.keys())[:20])
             markets = []
@@ -284,6 +285,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     "price": price,
                     "funding_rate": funding.get(asset, 0),
                     "open_interest": oi.get(asset, 0),
+                    "change_24h": changes_24h.get(asset, 0),
                 })
             _MARKET_CACHE["data"] = markets
             _MARKET_CACHE["ts"] = now
