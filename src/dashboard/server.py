@@ -84,7 +84,7 @@ HTML = """<!DOCTYPE html>
     </section>
     <section class="grid">
       <div class="card section"><div class="head"><div><h3>Equity Curve <span class="neutral">ⓘ</span></h3><div><b id="curve-equity">—</b> <span class="gain" id="curve-change">—</span></div></div><div class="tools"><button data-range="1D">1D</button><button data-range="1W">1W</button><button class="active" data-range="1M">1M</button><button data-range="3M">3M</button></div></div><canvas class="chart" id="equity-chart"></canvas></div>
-      <div class="card section" id="markets"><div class="head"><h3>Market Intelligence <span class="neutral">ⓘ</span></h3></div><div class="mini-grid"><div class="intel-card"><div class="label">Market Regime</div><h3 class="gain" id="market-regime">Watching</h3><div class="sub">Coinbase + Altfins</div></div><div class="intel-card"><div class="label">Volatility</div><h3 id="volatility">Normal</h3><div class="sub" id="vol-sub">ATR gates active</div></div><div class="intel-card"><div class="label">Funding Sentiment</div><h3 class="gain" id="funding">Enabled</h3><div class="sub">long confidence source</div></div><div class="intel-card"><div class="label">Altfins Signals</div><h3 class="gain" id="altfins-count">0</h3><div class="sub" id="altfins-sub">last hour</div></div></div><div class="sub" style="margin-top:13px">Market Heatmap (24H)</div><div class="heat" id="heatmap"></div></div>
+      <div class="card section" id="markets"><div class="head"><h3>Market Intelligence <span class="neutral">ⓘ</span></h3></div><div class="mini-grid"><div class="intel-card"><div class="label">Market Regime</div><h3 class="gain" id="market-regime">Watching</h3><div class="sub" id="source-sub">Coinbase + Altfins + Kalshi</div></div><div class="intel-card"><div class="label">Volatility</div><h3 id="volatility">Normal</h3><div class="sub" id="vol-sub">ATR gates active</div></div><div class="intel-card"><div class="label">Funding Sentiment</div><h3 class="gain" id="funding">Enabled</h3><div class="sub">long confidence source</div></div><div class="intel-card"><div class="label">Altfins Signals</div><h3 class="gain" id="altfins-count">0</h3><div class="sub" id="altfins-sub">last hour</div></div></div><div class="sub" style="margin-top:13px">Market Heatmap (24H)</div><div class="heat" id="heatmap"></div></div>
     </section>
     <section class="card section" id="strategies" style="margin-top:14px"><div class="head"><h3>Strategy Performance <span class="neutral">ⓘ</span></h3></div><div class="strategies" id="strategy-cards"></div></section>
     <section class="bottom">
@@ -198,7 +198,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                   "altfins_signal_count": snapshot.get("altfins_signal_count", 0),
                   "snapshot_age": None,
                   "coinbase_requests": snapshot.get("coinbase_requests", 0),
-                  "coinbase_rate_limited": snapshot.get("coinbase_rate_limited", False)}
+                  "coinbase_rate_limited": snapshot.get("coinbase_rate_limited", False),
+                  "kalshi_enabled": snapshot.get("kalshi_enabled", False)}
         try:
             row = conn.execute("SELECT equity, peak_equity FROM equity_snapshots ORDER BY id DESC LIMIT 1").fetchone()
             if row:

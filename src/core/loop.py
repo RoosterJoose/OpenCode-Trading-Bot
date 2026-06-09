@@ -27,6 +27,7 @@ from typing import Optional
 from src.adapters.altfins import AltfinsAdapter
 from src.adapters.base import ExchangeAdapter
 from src.adapters.coinbase_advanced import CoinbaseAdvancedAdapter
+from src.adapters.kalshi import KalshiAdapter
 from src.adapters.paper_perp import PaperPerpExchange
 from src.core.intents import TradeIntent
 from src.core.perp_risk import PerpRiskManager
@@ -88,6 +89,7 @@ class TradingLoop:
         self._daily_signals_log: list[dict] = []
         self._altfins_cycle = 0
         self._altfins = None
+        self._kalshi = None
 
     def _restore_paper_positions(self, exchange: PaperPerpExchange):
         positions = self.store.get_state("positions") or []
@@ -127,6 +129,18 @@ class TradingLoop:
         else:
             logger.info("Altfins: disabled (no API key)")
 
+        kalshi_key_id = self.config.get("kalshi", {}).get("api_key_id", "")
+        kalshi_pk = self.config.get("kalshi", {}).get("private_key", "") or os.environ.get("KALSHI_PRIVATE_KEY", "")
+        if kalshi_key_id and kalshi_pk:
+            self._kalshi = KalshiAdapter(
+                api_key_id=kalshi_key_id,
+                private_key_pem=kalshi_pk,
+                base_url="https://external-api.kalshi.com",
+            )
+            logger.info("Kalshi: enabled (11 assets)")
+        else:
+            logger.info("Kalshi: disabled (no API key)")
+
         ws_task = asyncio.create_task(hl.connect_ws())
 
         logger.info("=== Hermes v2 — Coinbase Perps ===")
@@ -142,6 +156,8 @@ class TradingLoop:
 
         ws_task.cancel()
         await hl.close()
+        if self._kalshi:
+            await self._kalshi.close()
         await exchange.close()
         self.store.close()
         logger.info("Shutdown complete")
@@ -196,6 +212,23 @@ class TradingLoop:
             except Exception as e:
                 logger.debug("fetch candles %s: %s", asset, e)
         await asyncio.gather(*[_fetch_one(a) for a in self.assets])
+
+        # 2a. Kalshi data supplement (parallel, fills gaps)
+        if self._kalshi:
+            try:
+                kalshi_mids = await self._kalshi.fetch_all_mids()
+                for asset, price in kalshi_mids.items():
+                    if price > 0 and mids.get(asset, 0) == 0:
+                        exchange.update_price(asset, price)
+                        self.risk.record_price(asset, price)
+                kalshi_oi = await self._kalshi.fetch_open_interest()
+                for asset, oi in kalshi_oi.items():
+                    exchange.update_open_interest(asset, oi)
+                kalshi_fr = await self._kalshi.fetch_funding()
+                for asset, rate in kalshi_fr.items():
+                    exchange.update_funding(asset, rate)
+            except Exception as e:
+                logger.debug("kalshi supplement: %s", e)
 
         # 2b. Altfins: both calls every 90 min (2 permits/cycle = 960/mo within 1,000 budget)
         self._altfins_cycle += 1
@@ -280,6 +313,7 @@ class TradingLoop:
                 "altfins_permits": permit_info,
                 "coinbase_requests": getattr(hl, "request_count", 0),
                 "coinbase_rate_limited": getattr(hl, "_consecutive_429s", 0) > 0,
+                "kalshi_enabled": self._kalshi is not None,
             }
             snapshot_path = self.data_dir / "external_snapshot.json"
             tmp = snapshot_path.with_suffix(".json.tmp")
