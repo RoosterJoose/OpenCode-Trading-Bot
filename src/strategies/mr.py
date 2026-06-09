@@ -20,7 +20,7 @@ from src.strategies.base import PerpStrategy
 class MeanReversion(PerpStrategy):
     def __init__(
         self,
-        rsi_oversold: float = 28.0,
+        rsi_oversold: float = 30.0,
         rsi_period: int = 14,
         atr_period: int = 14,
         cooldown_bars: int = 30,
@@ -109,18 +109,30 @@ class MeanReversion(PerpStrategy):
         from src.core.perp_risk import PerpRiskManager
         stop_min, stop_max = 1.5, 4.0
         stop_pct = max(stop_min / 100, min(stop_pct, stop_max / 100))
-        if is_long:
-            stop = entry_price * (1 - stop_pct)
-            risk_r = (entry_price - stop) / entry_price
-            tp1 = entry_price + (risk_r * self.tp1_r_mult * entry_price)
-            tp2 = entry_price + (risk_r * self.tp2_r_mult * entry_price)
-            tp3 = entry_price + (risk_r * self.tp3_r_mult * entry_price)
+
+        # Structural stop anchor (NotebookLM): place initial stop at 5-bar swing low/high
+        if len(candles) >= 5:
+            if is_long:
+                swing_low = min(c.low for c in candles[-5:])
+                stop = min(swing_low, entry_price * (1 - stop_pct))
+            else:
+                swing_high = max(c.high for c in candles[-5:])
+                stop = max(swing_high, entry_price * (1 + stop_pct))
         else:
-            stop = entry_price * (1 + stop_pct)
+            if is_long:
+                stop = entry_price * (1 - stop_pct)
+            else:
+                stop = entry_price * (1 + stop_pct)
+
+        # Clamp stop distance: never closer than stop_min, never farther than stop_max
+        if is_long:
+            stop = min(stop, entry_price * (1 - stop_min / 100))
+            stop = max(stop, entry_price * (1 - stop_max / 100))
+            risk_r = (entry_price - stop) / entry_price
+        else:
+            stop = max(stop, entry_price * (1 + stop_min / 100))
+            stop = min(stop, entry_price * (1 + stop_max / 100))
             risk_r = (stop - entry_price) / entry_price
-            tp1 = entry_price - (risk_r * self.tp1_r_mult * entry_price)
-            tp2 = entry_price - (risk_r * self.tp2_r_mult * entry_price)
-            tp3 = entry_price - (risk_r * self.tp3_r_mult * entry_price)
 
         if risk_r <= 0:
             return None

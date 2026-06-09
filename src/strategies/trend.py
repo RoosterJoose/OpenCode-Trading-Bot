@@ -8,9 +8,12 @@ Cooldown between trend entries to avoid whipsaw.
 
 from typing import Optional
 from datetime import datetime, timezone
+import logging
 
 from src.core.types import PerpCandle, PerpPosition, RegimeType, Side, Signal
 from src.strategies.base import PerpStrategy
+
+logger = logging.getLogger(__name__)
 
 
 class TrendFollow(PerpStrategy):
@@ -74,6 +77,7 @@ class TrendFollow(PerpStrategy):
             return None
 
         if regime not in (RegimeType.TRENDING, RegimeType.STRONGLY_TRENDING):
+            logger.info("TREND %s: regime=%s", asset, regime.value)
             return None
 
         last = candles[-1]

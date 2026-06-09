@@ -402,14 +402,16 @@ class TradingLoop:
                         await self._close(asset, pos, price, reason, exchange)
                         return
 
-        # Infer regime
-        regime = self._infer_regime(candles)
+        # Dual regime (NotebookLM): primary (200-period) for sizing/risk,
+        # secondary (50-period) for entry direction
+        primary_regime = self._infer_regime(candles, 200)
+        regime = self._infer_regime(candles, 50)  # fast secondary for entry
 
         # Dead market — skip entries entirely
         if regime == RegimeType.DEAD_MARKET and not pos:
             return
 
-        # Check risk gates
+        # Check risk gates (primary regime influences risk budget)
         risk_ok, risk_msg = self.risk.allow_entry(exchange.gross_exposure, exchange.effective_leverage)
         if not risk_ok:
             return
@@ -457,6 +459,15 @@ class TradingLoop:
                 stop_price = entry_price * (1 + stop_pct / 100)
             else:
                 stop_price = entry_price * (1 - stop_pct / 100)
+
+            # Structural stop anchor (NotebookLM): use 5-bar swing low/high as tighter invalidation
+            if len(candles) >= 5:
+                if side == Side.SHORT:
+                    swing_high = max(c.high for c in candles[-5:])
+                    stop_price = min(swing_high, stop_price)
+                else:
+                    swing_low = min(c.low for c in candles[-5:])
+                    stop_price = max(swing_low, stop_price)
 
             # Journal the signal
             signal_entry = {
@@ -613,10 +624,12 @@ class TradingLoop:
         return True, "accepted"
 
     @staticmethod
-    def _infer_regime(candles: list[PerpCandle]) -> RegimeType:
-        if len(candles) < 100:
+    def _infer_regime(candles: list[PerpCandle], max_lookback: int = 50) -> RegimeType:
+        if len(candles) < max_lookback:
+            max_lookback = len(candles)
+        if max_lookback < 50:
             return RegimeType.RANDOM_WALK
-
+        candles = candles[-max_lookback:]
         closes = [c.close for c in candles]
         last = closes[-1]
 
