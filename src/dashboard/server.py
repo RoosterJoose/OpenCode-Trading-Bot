@@ -10,7 +10,6 @@ Endpoints:
   /api/equity     — Equity history for chart
   /api/signals    — Recent signal log
   /api/reflection — Weekly reflection report
-  /api/asset-pnl  — Per-asset PnL breakdown
 """
 
 import json
@@ -27,9 +26,10 @@ from typing import Any
 
 # Resolve project root
 _repo = Path(__file__).resolve().parent.parent.parent
-ASSETS = ["BTC", "ETH", "BNB", "XRP", "SOL", "HYPE", "DOGE", "XLM", "ADA", "ZEC",
-           "LINK", "BCH", "TON", "HBAR", "LTC", "AVAX", "SUI", "NEAR", "DOT", "TRUMP",
-           "AAVE", "UNI", "FIL", "INJ", "ALGO", "ICP", "TAO", "RUNE", "OP", "ARB"]
+ASSETS = ["BTC", "ETH", "SOL", "XRP", "DOGE",
+           "ADA", "AVAX", "LINK", "DOT", "AAVE",
+           "LTC", "NEAR", "SUI", "BNB", "XLM",
+           "HBAR", "BCH", "ZEC", "PEPE", "SHIB"]
 _MARKET_CACHE = {"ts": 0.0, "data": []}
 
 HTML = """<!DOCTYPE html>
@@ -63,13 +63,13 @@ HTML = """<!DOCTYPE html>
   <aside class="side">
     <div class="brand"><div class="logo"></div><div><h1>HERMES</h1><span>TRADING BOT</span></div></div>
     <nav class="nav">
-      <a class="active" href="#overview"><span class="ico">⌂</span>Overview</a><a href="#markets"><span class="ico">◎</span>Markets</a><a href="#strategies"><span class="ico">⌘</span>Strategies</a><a href="#positions"><span class="ico">▣</span>Positions</a><a href="#risk"><span class="ico">◇</span>Risk</a><a href="#journal"><span class="ico">☷</span>Journal</a><a href="#analytics"><span class="ico">▥</span>Analytics</a><a href="#perf"><span class="ico">▤</span>Perf</a><a href="#closed"><span class="ico">⊞</span>Closed</a>
+      <a class="active" href="#overview"><span class="ico">⌂</span>Overview</a><a href="#markets"><span class="ico">◎</span>Markets</a><a href="#strategies"><span class="ico">⌘</span>Strategies</a><a href="#positions"><span class="ico">▣</span>Positions</a><a href="#risk"><span class="ico">◇</span>Risk</a><a href="#journal"><span class="ico">☷</span>Journal</a><a href="#analytics"><span class="ico">▥</span>Analytics</a>
     </nav>
     <div class="botbox"><div class="row"><span>Bot Status</span><b><i class="dot"></i> Running</b></div><div class="row"><span>Mode</span><b id="side-mode">Paper</b></div><div class="row"><span>Altfins Permits</span><b id="altfins-permits">—</b></div><div class="row"><span>Server</span><b>Oracle US-East</b></div><div class="row"><span>Refresh</span><b>15 sec</b></div></div>
   </aside>
   <main class="main" id="overview">
     <div class="top">
-      <div class="title"><h2>Dashboard</h2><p><span id="today"></span> · <span id="clock"></span> UTC</p><div id="daily-flash" style="display:none"></div></div>
+      <div class="title"><h2>Dashboard</h2><p><span id="today"></span> · <span id="clock"></span> UTC</p></div>
       <label class="search">⌕ <input id="search" placeholder="Search markets, pairs, strategies..." autocomplete="off"><kbd>⌘ K</kbd></label>
       <div style="display:flex;gap:14px;align-items:center"><div class="pill"><i class="dot"></i> Bot Active</div><div class="profile"><div class="avatar">H</div><div><b>Hermes</b><br><span class="pro">Paper</span></div></div></div>
     </div>
@@ -80,16 +80,15 @@ HTML = """<!DOCTYPE html>
       <div class="card kpi"><div class="label">Win Rate</div><div style="display:flex;justify-content:space-between"><div><div class="value" id="win-rate">—</div><div class="sub gain" id="win-rate-sub">live</div></div><div class="donut"></div></div></div>
       <div class="card kpi"><div class="label">Profit Factor</div><div class="value" id="profit-factor">—</div><div class="sub gain" id="profit-sub">—</div><canvas class="spark" id="spark-profit"></canvas></div>
       <div class="card kpi"><div class="label">Current Exposure</div><div class="value" id="exposure-pct">—</div><div class="bar"><span id="exposure-bar" style="width:0%"></span></div></div>
-      <div class="card kpi"><div class="label">Session PnL</div><div class="value" id="session-pnl">—</div><div class="sub" id="session-sub">Since 00:00 UTC</div></div><div class="card kpi"><div class="label">Active Positions</div><div class="value" id="active-positions">—</div><div class="sub" id="positions-sub">Across tracked pairs</div><canvas class="spark" id="spark-pos"></canvas></div>
+      <div class="card kpi"><div class="label">Active Positions</div><div class="value" id="active-positions">—</div><div class="sub" id="positions-sub">Across tracked pairs</div><canvas class="spark" id="spark-pos"></canvas></div>
     </section>
     <section class="grid">
       <div class="card section"><div class="head"><div><h3>Equity Curve <span class="neutral">ⓘ</span></h3><div><b id="curve-equity">—</b> <span class="gain" id="curve-change">—</span></div></div><div class="tools"><button data-range="1D">1D</button><button data-range="1W">1W</button><button class="active" data-range="1M">1M</button><button data-range="3M">3M</button></div></div><canvas class="chart" id="equity-chart"></canvas></div>
-      <div class="card section" id="markets"><div class="head"><h3>Market Intelligence <span class="neutral">ⓘ</span></h3></div><div class="mini-grid"><div class="intel-card"><div class="label">Market Regime</div><h3 class="gain" id="market-regime">Watching</h3><div class="sub">Hyperliquid + Altfins</div></div><div class="intel-card"><div class="label">Volatility</div><h3 id="volatility">Normal</h3><div class="sub" id="vol-sub">ATR gates active</div></div><div class="intel-card"><div class="label">Funding Sentiment</div><h3 class="gain" id="funding">Enabled</h3><div class="sub">long confidence source</div></div><div class="intel-card"><div class="label">Altfins Signals</div><h3 class="gain" id="altfins-count">0</h3><div class="sub" id="altfins-sub">last hour</div></div></div><div class="sub" style="margin-top:13px">Market Heatmap (24H)</div><div class="heat" id="heatmap"></div></div>
+      <div class="card section" id="markets"><div class="head"><h3>Market Intelligence <span class="neutral">ⓘ</span></h3></div><div class="mini-grid"><div class="intel-card"><div class="label">Market Regime</div><h3 class="gain" id="market-regime">Watching</h3><div class="sub">Coinbase + Altfins</div></div><div class="intel-card"><div class="label">Volatility</div><h3 id="volatility">Normal</h3><div class="sub" id="vol-sub">ATR gates active</div></div><div class="intel-card"><div class="label">Funding Sentiment</div><h3 class="gain" id="funding">Enabled</h3><div class="sub">long confidence source</div></div><div class="intel-card"><div class="label">Altfins Signals</div><h3 class="gain" id="altfins-count">0</h3><div class="sub" id="altfins-sub">last hour</div></div></div><div class="sub" style="margin-top:13px">Market Heatmap (24H)</div><div class="heat" id="heatmap"></div></div>
     </section>
     <section class="card section" id="strategies" style="margin-top:14px"><div class="head"><h3>Strategy Performance <span class="neutral">ⓘ</span></h3></div><div class="strategies" id="strategy-cards"></div></section>
     <section class="bottom">
-      <div id="strategy-grid"></div>
-      <div class="card section" id="positions"><div class="head"><h3>Open Positions (<span id="position-count">0</span>) <span class="neutral">ⓘ</span></h3><button class="viewbtn" id="position-filter">View All</button></div><div style="overflow:auto"><table><thead><tr><th>Pair</th><th>Side</th><th>Entry</th><th>Current</th><th>Unrealized PnL</th><th>Stop Loss</th><th>Leverage</th><th>Size</th></tr></thead><tbody id="positions-body"></tbody></table></div></div><div class="card section" id="perf"><div class="head"><h3>Per-Asset PnL <span class="neutral">&#x24d8;</span></h3></div><div style="max-height:500px;overflow:auto"><table><thead><tr><th>Asset</th><th>PnL</th><th>Trades</th><th>Win Rate</th><th>Bar</th></tr></thead><tbody id="asset-pnl-body"></tbody></table></div></div><div class="card section" id="closed"><div class="head"><h3>Closed Positions (<span id="closed-count">0</span>) <span class="neutral">&#x24d8;</span></h3></div><div style="max-height:400px;overflow:auto"><table><thead><tr><th>Pair</th><th>Side</th><th>Strategy</th><th>Entry</th><th>Exit</th><th>PnL</th><th>R</th><th>Hold</th></tr></thead><tbody id="closed-body"></tbody></table></div></div>
+      <div class="card section" id="positions"><div class="head"><h3>Open Positions (<span id="position-count">0</span>) <span class="neutral">ⓘ</span></h3><button class="viewbtn" id="position-filter">View All</button></div><div style="overflow:auto"><table><thead><tr><th>Pair</th><th>Side</th><th>Entry</th><th>Current</th><th>Unrealized PnL</th><th>Stop Loss</th><th>Leverage</th><th>Size</th></tr></thead><tbody id="positions-body"></tbody></table></div></div>
       <div class="card section" id="risk"><div class="head"><h3>Risk Controls <span class="neutral">ⓘ</span></h3></div><div style="display:flex;gap:18px;align-items:center"><div><div class="riskline"><div class="label">Max Daily Drawdown</div><b class="gain" id="drawdown">—</b><div class="bar"><span id="dd-bar" style="width:0%"></span></div></div><div class="riskline"><div class="label">Leverage Usage</div><b id="leverage">—</b><div class="bar"><span id="lev-bar" style="width:0%"></span></div></div></div><div class="ring" id="risk-ring">0%</div></div><div class="riskline"><div class="label">Exposure Limit</div><b id="limit-text">—</b><div class="bar"><span id="limit-bar" style="width:0%"></span></div></div><div class="badge positive">Kill Switch Enabled</div></div>
       <div class="card section ai"><div class="head"><h3>AI Reflection <span class="neutral">ⓘ</span></h3></div><div id="reflection">Loading...</div><button class="ask">Ask Hermes ↗</button></div>
       <div class="card section"><div class="head"><h3>Daily Health <span class="neutral">ⓘ</span></h3></div><div id="daily-health">Loading...</div></div>
@@ -101,14 +100,12 @@ HTML = """<!DOCTYPE html>
   </main>
 </div>
 <script>
-const ASSETS=['BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','LINK','DOT','LTC','NEAR','ATOM','UNI','ARB','OP','APT','SUI','AAVE','INJ'];let state={status:{},trades:[],positions:[],equity:[],signals:[],reflection:{},markets:[],range:'1M',query:'',learnings:{},health:{},closedPositions:[],assetPnl:[]};
+const ASSETS=['BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','LINK','DOT','LTC','NEAR','ATOM','UNI','ARB','OP','APT','SUI','AAVE','INJ'];let state={status:{},trades:[],positions:[],equity:[],signals:[],reflection:{},markets:[],range:'1M',query:'',learnings:{},health:{}};
 const fmtUSD=n=>'$'+Number(n||0).toLocaleString(undefined,{maximumFractionDigits:2});const pct=n=>(Number(n||0)>=0?'+':'')+Number(n||0).toFixed(2)+'%';const cls=n=>Number(n||0)>=0?'positive':'negative';
 function now(){const d=new Date();document.getElementById('today').textContent=d.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'});document.getElementById('clock').textContent=d.toISOString().slice(11,19)}setInterval(now,1000);now();
-function drawLine(id, pts, color='#1d9bff', fill=true, drawdownPts=null){const c=document.getElementById(id);if(!c)return;const r=c.getBoundingClientRect();c.width=Math.max(40,r.width*devicePixelRatio);c.height=Math.max(28,r.height*devicePixelRatio);const x=c.getContext('2d');x.scale(devicePixelRatio,devicePixelRatio);const w=r.width,h=r.height;x.clearRect(0,0,w,h);if(!pts||pts.length<2){pts=[0,1,0.6,1.4,1.2,1.8]}const min=Math.min(...pts),max=Math.max(...pts),rng=max-min||1;x.beginPath();pts.forEach((p,i)=>{const xx=i/(pts.length-1)*w;const yy=h-8-((p-min)/rng)*(h-16);i?x.lineTo(xx,yy):x.moveTo(xx,yy)});x.strokeStyle=color;x.lineWidth=2;x.stroke();if(drawdownPts&&drawdownPts.length===pts.length){const ddMin=Math.min(...drawdownPts);x.beginPath();drawdownPts.forEach(function(d,i){const xx=i/(drawdownPts.length-1)*w;const yy=h-8-((d-ddMin)/(rng||1))*(h-16);i?x.lineTo(xx,yy):x.moveTo(xx,yy)});x.strokeStyle='rgba(255,68,68,0.25)';x.lineWidth=1;x.stroke()}if(fill){x.lineTo(w,h);x.lineTo(0,h);x.closePath();const g=x.createLinearGradient(0,0,0,h);g.addColorStop(0,color+'55');g.addColorStop(1,color+'00');x.fillStyle=g;x.fill()}}
+function drawLine(id, pts, color='#1d9bff', fill=true){const c=document.getElementById(id);if(!c)return;const r=c.getBoundingClientRect();c.width=Math.max(40,r.width*devicePixelRatio);c.height=Math.max(28,r.height*devicePixelRatio);const x=c.getContext('2d');x.scale(devicePixelRatio,devicePixelRatio);const w=r.width,h=r.height;x.clearRect(0,0,w,h);if(!pts||pts.length<2){pts=[0,1,0.6,1.4,1.2,1.8]}const min=Math.min(...pts),max=Math.max(...pts),rng=max-min||1;x.beginPath();pts.forEach((p,i)=>{const xx=i/(pts.length-1)*w;const yy=h-8-((p-min)/rng)*(h-16);i?x.lineTo(xx,yy):x.moveTo(xx,yy)});x.strokeStyle=color;x.lineWidth=2;x.stroke();if(fill){x.lineTo(w,h);x.lineTo(0,h);x.closePath();const g=x.createLinearGradient(0,0,0,h);g.addColorStop(0,color+'55');g.addColorStop(1,color+'00');x.fillStyle=g;x.fill()}}
 function equitySlice(){const map={ '1D':24,'1W':7*24,'1M':31*24,'3M':93*24};return state.equity.slice(-Math.min(state.equity.length,map[state.range]||state.equity.length)).map(p=>Number(p.equity||0))}
-function renderSessionPnl(){const s=state.status||{};const eq=Number(s.equity||10000);const peek=Number(s.peak_equity||eq);const startOfDay=eq-peek+Number(s.peak_equity||eq);const sessionPnl=eq-10000;document.getElementById('session-pnl').textContent=fmtUSD(sessionPnl);document.getElementById('session-sub').textContent=pct(s.daily_pnl_pct||0)+' today';}
-function renderDailyFlash(){const r=state.dailyReflection;const flash=document.getElementById('daily-flash');if(!flash)return;if(!r||!r.learning){flash.style.display='none';return}const urgent=r.learning.filter(function(l){return l.count>=5&&l.type==='strategy_limitation'});if(urgent.length){flash.className='flash-alert';flash.innerHTML='<b>Alert:</b> '+urgent[0].count+'x '+urgent[0].reason+' — '+urgent[0].action;return}const info=r.learning.filter(function(l){return l.count>=3});if(info.length){flash.className='flash-info';flash.innerHTML='<b>Note:</b> '+info[0].count+'x '+info[0].reason+' on '+info[0].assets.slice(0,5).join(', ')+(info[0].assets.length>5?'...':'');return}flash.style.display='none'}
-function renderKpis(){const s=state.status,p=state.positions,eq=Number(s.equity||10000),peak=Number(s.peak_equity||eq),dd=peak?((peak-eq)/peak*100):0,exp=Number(s.gross_exposure||0),lev=Number(s.effective_leverage||0),expPct=Math.min(100,exp/(eq*3||1)*100);document.getElementById('equity').textContent=fmtUSD(eq);document.getElementById('curve-equity').textContent=fmtUSD(eq);document.getElementById('equity-sub').textContent=pct(s.daily_pnl_pct||0)+' today';document.getElementById('curve-change').textContent=pct(((eq-10000)/10000)*100)+' all time';document.getElementById('daily-pnl').textContent=fmtUSD((eq-10000));document.getElementById('daily-pnl-sub').textContent=pct(s.daily_pnl_pct||0);document.getElementById('weekly-pnl').textContent=fmtUSD((eq-10000));document.getElementById('weekly-pnl-sub').textContent=pct(((eq-10000)/10000)*100);document.getElementById('win-rate').textContent=s.win_rate?(s.win_rate*100).toFixed(1)+'%':'0.0%';document.getElementById('profit-factor').textContent=s.profit_factor?Number(s.profit_factor).toFixed(2):'—';document.getElementById('profit-sub').textContent=s.profit_factor?'+ live':'waiting for trades';document.getElementById('exposure-pct').textContent=expPct.toFixed(1)+'%';document.getElementById('exposure-bar').style.width=expPct+'%';document.getElementById('active-positions').textContent=p.length;document.getElementById('positions-sub').textContent='Across '+ASSETS.length+' pairs';document.getElementById('drawdown').textContent=dd.toFixed(2)+'% / 5.00%';document.getElementById('dd-bar').style.width=Math.min(100,dd/5*100)+'%';document.getElementById('leverage').textContent=lev.toFixed(2)+'x / 3.0x';document.getElementById('lev-bar').style.width=Math.min(100,lev/3*100)+'%';document.getElementById('limit-text').textContent=expPct.toFixed(1)+'% / 100%';document.getElementById('limit-bar').style.width=expPct+'%';document.getElementById('risk-ring').textContent=Math.round(Math.max(dd/5*100,expPct))+'%';document.getElementById('side-mode').textContent=(s.mode||'paper').toUpperCase();const ap=s.altfins_permits||{};const avail=ap.available;document.getElementById('altfins-permits').textContent=avail!==undefined?avail+'/1000':'—';const sc=s.altfins_signal_count||0;document.getElementById('altfins-count').textContent=sc;document.getElementById('altfins-sub').textContent=sc?'signals active':'no signals';renderDailyFlash();['spark-equity','spark-daily','spark-weekly','spark-profit','spark-pos'].forEach((id,i)=>drawLine(id,equitySlice().slice(-40),i===3?'#7d3cff':'#1d9bff',false));var eqSlice=equitySlice();var peakSoFar=eqSlice[0];var ddPts=eqSlice.map(function(v){if(v>peakSoFar)peakSoFar=v;return peakSoFar-v});drawLine('equity-chart',eqSlice,'#1d9bff',true,ddPts);renderSessionPnl()}
+function renderKpis(){const s=state.status,p=state.positions,eq=Number(s.equity||10000),peak=Number(s.peak_equity||eq),dd=peak?((peak-eq)/peak*100):0,exp=Number(s.gross_exposure||0),lev=Number(s.effective_leverage||0),expPct=Math.min(100,exp/(eq*3||1)*100);document.getElementById('equity').textContent=fmtUSD(eq);document.getElementById('curve-equity').textContent=fmtUSD(eq);document.getElementById('equity-sub').textContent=pct(s.daily_pnl_pct||0)+' today';document.getElementById('curve-change').textContent=pct(((eq-10000)/10000)*100)+' all time';document.getElementById('daily-pnl').textContent=fmtUSD((eq-10000));document.getElementById('daily-pnl-sub').textContent=pct(s.daily_pnl_pct||0);document.getElementById('weekly-pnl').textContent=fmtUSD((eq-10000));document.getElementById('weekly-pnl-sub').textContent=pct(((eq-10000)/10000)*100);document.getElementById('win-rate').textContent=s.win_rate?(s.win_rate*100).toFixed(1)+'%':'0.0%';document.getElementById('profit-factor').textContent=s.profit_factor?Number(s.profit_factor).toFixed(2):'—';document.getElementById('profit-sub').textContent=s.profit_factor?'+ live':'waiting for trades';document.getElementById('exposure-pct').textContent=expPct.toFixed(1)+'%';document.getElementById('exposure-bar').style.width=expPct+'%';document.getElementById('active-positions').textContent=p.length;document.getElementById('positions-sub').textContent='Across '+ASSETS.length+' pairs';document.getElementById('drawdown').textContent=dd.toFixed(2)+'% / 5.00%';document.getElementById('dd-bar').style.width=Math.min(100,dd/5*100)+'%';document.getElementById('leverage').textContent=lev.toFixed(2)+'x / 3.0x';document.getElementById('lev-bar').style.width=Math.min(100,lev/3*100)+'%';document.getElementById('limit-text').textContent=expPct.toFixed(1)+'% / 100%';document.getElementById('limit-bar').style.width=expPct+'%';document.getElementById('risk-ring').textContent=Math.round(Math.max(dd/5*100,expPct))+'%';document.getElementById('side-mode').textContent=(s.mode||'paper').toUpperCase();const ap=s.altfins_permits||{};const avail=ap.available;document.getElementById('altfins-permits').textContent=avail!==undefined?avail+'/1000':'—';const sc=s.altfins_signal_count||0;document.getElementById('altfins-count').textContent=sc;document.getElementById('altfins-sub').textContent=sc?'signals active':'no signals';['spark-equity','spark-daily','spark-weekly','spark-profit','spark-pos'].forEach((id,i)=>drawLine(id,equitySlice().slice(-40),i===3?'#7d3cff':'#1d9bff',false));drawLine('equity-chart',equitySlice(),'#1d9bff',true)}
 function renderMarkets(){const heat=document.getElementById('heatmap');const markets=state.markets.length?state.markets:ASSETS.map(a=>({asset:a,change_24h:0,price:0,funding:0,volume_24h:0}));heat.innerHTML=markets.map(m=>{const n=Number(m.change_24h||0);return '<div class="'+(n<0?'red':'')+'">'+m.asset+'<br><span class="'+(n<0?'loss':'gain')+'">'+pct(n)+'</span></div>'}).join('');const btc=markets.find(m=>m.asset==='BTC')||{};document.getElementById('market-regime').textContent=state.positions.length?'Active Risk':(Number(btc.change_24h||0)>1?'Bullish Trend':'Watching');document.getElementById('volatility').textContent=(state.status.effective_leverage||0)>2?'Elevated':'Normal';document.getElementById('funding').textContent=btc.funding!==undefined?(Number(btc.funding)*100).toFixed(4)+'%':'Enabled'}
 function renderStrategies(){const trades=state.trades;const by=n=>trades.filter(t=>(t.strategy||'').toLowerCase().includes(n));const cards=[['Mean Reversion','mr','Active','#10e6ff'],['Trend Following','trend','Active','#7d3cff'],['Breakout','breakout','Paused','#ffb11a'],['Scanner Health','scanner','Active','#ff8a00']];document.getElementById('strategy-cards').innerHTML=cards.map(([name,key,tag,color])=>{const ts=by(key),wins=ts.filter(t=>Number(t.pnl_pct)>0).length,wr=ts.length?wins/ts.length*100:0;return '<div class="strategy"><span class="tag">'+tag+'</span><h4 style="margin:0 0 18px;color:'+color+'">'+name+'</h4><table><tr><th>Trades</th><th>Win Rate</th><th>Avg R</th></tr><tr><td>'+ts.length+'</td><td>'+(wr?wr.toFixed(0):'—')+'%</td><td>'+((ts.reduce((a,t)=>a+Number(t.r_multiple||0),0)/(ts.length||1)).toFixed(2))+'R</td></tr></table><canvas class="spark" id="spark-'+key+'"></canvas></div>'}).join('');cards.forEach(([_,key,,color])=>drawLine('spark-'+key,equitySlice().slice(-24),color,false))}
 function renderPositions(){const tbody=document.getElementById('positions-body');document.getElementById('position-count').textContent=state.positions.length;if(!state.positions.length){tbody.innerHTML='<tr><td colspan="8" class="empty">No open paper positions yet. The bot is waiting for valid setups.</td></tr>';return}tbody.innerHTML=state.positions.map(p=>{const price=Number(p.entry_price||0)+Number(p.unrealized_pnl||0)/(Number(p.size||1));return '<tr><td>'+p.asset+'/USDT</td><td><span class="badge '+(p.side==='long'?'positive':'negative')+'">'+p.side+'</span></td><td>'+fmtUSD(p.entry_price)+'</td><td>'+fmtUSD(price)+'</td><td class="'+cls(p.unrealized_pnl)+'">'+fmtUSD(p.unrealized_pnl)+'</td><td>'+fmtUSD(p.stop_loss||0)+'</td><td>'+Number(p.leverage||0).toFixed(1)+'x</td><td>'+Number(p.size||0).toFixed(4)+'</td></tr>'}).join('')}
@@ -116,11 +113,9 @@ function renderWatchlist(){const q=state.query.toUpperCase();const markets=(stat
 function renderActivity(){const sigs=state.signals.slice(-8).reverse();const acts=[...sigs.map(s=>({t:(s.time||'').slice(11,16),b:'Signal Detected',d:(s.side||'').toUpperCase()+' '+s.asset+' '+(s.strategy||'')+' conf '+Math.round((s.confidence||0)*100)+'%'})),...state.trades.slice(0,4).map(t=>({t:(t.exit_time||'').slice(11,16),b:'Trade Closed',d:t.asset+' '+(Number(t.pnl_pct||0)>=0?'+':'')+Number(t.pnl_pct||0).toFixed(2)+'%'}))];document.getElementById('activity').innerHTML=(acts.length?acts:[{t:'now',b:'System Nominal',d:'Heartbeat, dashboard, and health timer active.'}]).slice(0,6).map(a=>'<div class="event"><small>'+a.t+'</small><div class="pin"></div><div><b>'+a.b+'</b><span class="sub">'+a.d+'</span></div></div>').join('')}
 function renderReflection(){const r=state.reflection;let html='<p><b>Today&#39;s Summary</b></p><p class="sub">Paper mode active. Local TA and Altfins metrics are both feeding entry confidence. Health checks restart the bot if snapshots go stale.</p>';if(r&&r.suggestions&&r.suggestions.length){html+='<p><b>Pending Suggestions</b></p>'+r.suggestions.map(s=>'<p class="sub">'+s.parameter+': '+s.current_value+' → '+s.suggested_value+'</p>').join('')}else html+='<p><b>Key Lesson</b></p><p class="sub">Reflection runs after enough closed paper trades.</p>';document.getElementById('reflection').innerHTML=html}
 function renderDailyReflection(){const r=state.dailyReflection;if(!r||!r.assets){document.getElementById('daily-reflection').innerHTML='<p class="sub">Waiting for end-of-day data.</p>';return}const sig=r.significant_moves||0;const miss=r.missed_moves||0;const catchable=r.potentially_catchable||0;let html='<p><b>'+r.date+'</b><span class="sub"> · '+r.bias+'</span></p>';html+='<p class="sub">'+sig+' significant moves · '+miss+' missed · '+catchable+' catchable</p>';if(r.learning&&r.learning.length){r.learning.forEach(l=>{if(l.type==='market_summary')return;html+='<div class="badge '+(l.type==='missed_by_config'?'positive':'neutral')+'">'+l.count+'x '+l.reason+'</div><p class="sub">'+l.action+'</p>'})}html+='<div style="max-height:200px;overflow:auto;margin-top:8px">'+r.assets.filter(a=>a.significant).slice(0,10).map(a=>'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border)"><span>'+a.asset+'</span><span class="'+(a.change_24h_pct>=0?'gain':'loss')+'">'+pct(a.change_24h_pct)+'</span></div>').join('')+'</div>';document.getElementById('daily-reflection').innerHTML=html}
-function renderAssetPnl(){const tb=document.getElementById('asset-pnl-body');const data=state.assetPnl||[];if(!data.length){tb.innerHTML='<tr><td colspan="5" class="empty">No data yet.</td></tr>';return}const maxPnl=Math.max(...data.map(function(x){return Math.abs(x.pnl)}),1);tb.innerHTML=data.map(function(r){var c=r.pnl>=0?'gain':'loss';var barWidth=Math.abs(r.pnl)/maxPnl*100;return '<tr><td>'+r.asset+'</td><td class="'+c+'">'+fmtUSD(r.pnl)+'</td><td>'+r.trades+'</td><td>'+r.wr+'%</td><td><div class="pnl-bar"><div class="bar-fill '+c+'" style="width:'+barWidth+'%"></div></div></td></tr>'}).join('')}
-function renderClosedPositions(){const tb=document.getElementById('closed-body');const cp=state.closedPositions||[];document.getElementById('closed-count').textContent=cp.length;if(!cp.length){tb.innerHTML='<tr><td colspan="8" class="empty">No closed positions yet.</td></tr>';return}tb.innerHTML=cp.slice(0,50).map(function(t){var c=t.pnl_dollars>=0?'gain':'loss';var sc=t.side==='long'?'positive':'negative';return '<tr><td>'+t.asset+'</td><td><span class="badge '+sc+'">'+t.side+'</span></td><td>'+t.strategy+'</td><td>'+fmtUSD(t.entry_price)+'</td><td>'+fmtUSD(t.exit_price)+'</td><td class="'+c+'">'+fmtUSD(t.pnl_dollars)+' ('+pct(t.pnl_pct)+')</td><td>'+t.r_multiple.toFixed(2)+'R</td><td>'+t.hold_hours+'h</td></tr>'}).join('')}
 function renderHealth(){const h=state.health;if(!h||!h.checks){document.getElementById('daily-health').innerHTML='<p class="sub">Waiting for first health check.</p>';return}let html='<p><b>'+h.date+'</b><span class="badge '+(h.passed?'positive':'negative')+'">'+(h.passed?'PASS':'FAIL')+'</span></p>';if(h.warnings&&h.warnings.length){html+='<p><b>Warnings ('+h.warnings.length+')</b></p>'+h.warnings.slice(0,5).map(w=>'<p class="sub" style="color:var(--orange)">'+w+'</p>').join('')}if(h.failures&&h.failures.length){html+='<p><b>Failures ('+h.failures.length+')</b></p>'+h.failures.slice(0,5).map(f=>'<p class="sub" style="color:var(--red)">'+f+'</p>').join('')}if(!h.warnings.length&&!h.failures.length){html+='<p class="sub" style="color:var(--green)">All checks passed — no warnings.</p>'}document.getElementById('daily-health').innerHTML=html}
 function renderLearnings(){const c=state.learnings&&state.learnings.cumulative;if(!c||!c.total_days){document.getElementById('learnings').innerHTML='<p class="sub">Learning accumulation starts after multiple days of data.</p>';return}let html='<p><b>'+c.total_days+' days tracked</b><span class="sub"> · last update '+c.last_updated.slice(0,10)+'</span></p>';if(c.lessons&&c.lessons.length){html+=c.lessons.map(l=>'<div class="badge neutral">Lesson</div><p class="sub">'+l+'</p>').join('')}if(c.persistent_missed_reasons&&c.persistent_missed_reasons.length){html+='<p><b>Persistent Patterns</b></p>'+c.persistent_missed_reasons.slice(0,5).map(r=>'<p class="sub">'+r.reason+': '+r.count+'x</p>').join('')}if(c.most_frequently_bearish&&c.most_frequently_bearish.length){html+='<p><b>Most Bearish Assets</b> <span class="sub">('+c.most_frequently_bearish[0].days+' days)</span></p><div style="display:flex;flex-wrap:wrap;gap:8px">'+c.most_frequently_bearish.slice(0,6).map(a=>'<span class="badge negative">'+a.asset+'</span>').join('')+'</div>'}document.getElementById('learnings').innerHTML=html}
-async function load(){try{const [status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health,closedPositions,assetPnl]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection','/api/markets','/api/daily-reflection','/api/learnings','/api/health','/api/closed-positions','/api/asset-pnl'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health,closedPositions,assetPnl};renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection();renderDailyReflection();renderLearnings();renderHealth();renderClosedPositions();renderAssetPnl()}catch(e){console.error(e)}}
+async function load(){try{const [status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection','/api/markets','/api/daily-reflection','/api/learnings','/api/health'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health};renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection();renderDailyReflection();renderLearnings();renderHealth()}catch(e){console.error(e)}}
 document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-range]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.range=b.dataset.range;renderKpis()});document.getElementById('search').addEventListener('input',e=>{state.query=e.target.value;renderWatchlist()});window.addEventListener('resize',()=>renderKpis());load();setInterval(load,60000);
 </script>
 </body>
@@ -166,8 +161,6 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             "/api/signals": self._api_signals,
             "/api/reflection": self._api_reflection,
             "/api/daily-reflection": self._api_daily_reflection,
-            "/api/closed-positions": self._api_closed_positions,
-            "/api/asset-pnl": self._api_asset_pnl,
             "/api/health": self._api_health,
             "/api/learnings": self._api_learnings,
             "/api/lessons": self._api_lessons,
@@ -188,72 +181,6 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         conn = sqlite3.connect(str(self.db_path), timeout=5.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
-
-
-    def _api_closed_positions(self):
-        conn = self._connect()
-        try:
-            rows = conn.execute("SELECT * FROM trades WHERE exit_time IS NOT NULL ORDER BY id DESC LIMIT 100").fetchall()
-            result = []
-            for r in rows:
-                d = dict(r)
-                pnl = float(d.get("pnl_dollars", 0) or 0)
-                pnl_pct = float(d.get("pnl_pct", 0) or 0)
-                entry_price = float(d.get("entry_price", 0) or 0)
-                exit_price = float(d.get("exit_price", 0) or 0)
-                r_mult = float(d.get("r_multiple", 0) or 0)
-                hold_hours = 0
-                if d.get("entry_time") and d.get("exit_time"):
-                    try:
-                        from datetime import datetime, timezone
-                        et = datetime.fromisoformat(d["entry_time"])
-                        xt = datetime.fromisoformat(d["exit_time"])
-                        hold_hours = (xt - et).total_seconds() / 3600
-                    except:
-                        pass
-                result.append({
-                    "asset": d.get("asset", ""),
-                    "side": d.get("side", "long"),
-                    "strategy": d.get("strategy", "unknown"),
-                    "entry_price": entry_price,
-                    "exit_price": exit_price,
-                    "entry_time": d.get("entry_time", ""),
-                    "exit_time": d.get("exit_time", ""),
-                    "pnl_dollars": pnl,
-                    "pnl_pct": pnl_pct,
-                    "r_multiple": r_mult,
-                    "hold_hours": round(hold_hours, 1),
-                })
-            self._send_json(result)
-        except Exception:
-            self._send_json([])
-        finally:
-            conn.close()
-
-
-    def _api_asset_pnl(self):
-        conn = self._connect()
-        try:
-            rows = conn.execute("SELECT asset, side, pnl_dollars FROM trades WHERE exit_time IS NOT NULL").fetchall()
-            agg = {}
-            for r in rows:
-                a = r["asset"]
-                pnl = float(r["pnl_dollars"] or 0)
-                if a not in agg:
-                    agg[a] = {"asset": a, "pnl": 0, "trades": 0, "wins": 0}
-                agg[a]["pnl"] += pnl
-                agg[a]["trades"] += 1
-                if pnl > 0:
-                    agg[a]["wins"] += 1
-            result = sorted(agg.values(), key=lambda x: x["pnl"], reverse=True)
-            for r in result:
-                r["pnl"] = round(r["pnl"], 2)
-                r["wr"] = round(r["wins"] / r["trades"] * 100, 1) if r["trades"] else 0
-            self._send_json(result)
-        except Exception:
-            self._send_json([])
-        finally:
-            conn.close()
 
     def _api_status(self):
         conn = self._connect()
@@ -342,23 +269,24 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             snapshot = {}
             if snapshot_path.exists():
                 snapshot = json.loads(snapshot_path.read_text())
-            prices = snapshot.get("prices", {})
             funding = snapshot.get("funding", {})
             oi = snapshot.get("oi", {})
-            change_24h = snapshot.get("change_24h", {})
+            prices = snapshot.get("prices", {})
 
-            assets_in_data = [a for a in ASSETS if a in prices]
+            assets_in_data = set(list(funding.keys())[:20])
             markets = []
-            for asset in assets_in_data:
+            for asset in ASSETS:
+                if asset not in assets_in_data:
+                    continue
+                price = prices.get(asset, 0)
                 markets.append({
                     "asset": asset,
-                    "price": prices.get(asset, 0),
-                    "change_24h": change_24h.get(asset, 0),
-                    "funding": funding.get(asset, 0),
+                    "price": price,
+                    "funding_rate": funding.get(asset, 0),
                     "open_interest": oi.get(asset, 0),
                 })
-            markets.sort(key=lambda m: ASSETS.index(m["asset"]))
-            _MARKET_CACHE.update({"ts": now, "data": markets})
+            _MARKET_CACHE["data"] = markets
+            _MARKET_CACHE["ts"] = now
             self._send_json(markets)
         except Exception:
             self._send_json(_MARKET_CACHE["data"] or [])
