@@ -445,7 +445,7 @@ class TradingLoop:
             if stop_pct <= 0:
                 continue
 
-            entry_price = meta.get("entry_price", price)
+            entry_price = price
             qty, risk_dollars, max_notional = self.risk.position_size(
                 asset, exchange.equity, stop_pct, entry_price, exchange.gross_exposure
             )
