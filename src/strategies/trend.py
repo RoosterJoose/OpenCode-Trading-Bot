@@ -245,9 +245,11 @@ class TrendFollow(PerpStrategy):
         if sl > 0:
             if is_short:
                 if current_price >= sl:
+                    self._cooldowns[asset] = self.cooldown_cycles
                     return "stop_loss", current_price
             else:
                 if current_price <= sl:
+                    self._cooldowns[asset] = self.cooldown_cycles
                     return "stop_loss", current_price
 
         atr = self._atr(candles)
