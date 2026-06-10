@@ -74,7 +74,8 @@ class DonchianBreakout(PerpStrategy):
         prev = candles[-2] if len(candles) >= 2 else last
 
         # Volume gate
-        if last.volume * last.close < self.min_volume_usd:
+        vol_min = self._get_threshold(asset, "volume_min_usd", self.min_volume_usd)
+        if last.volume * last.close < vol_min:
             return None
 
         # Donchian channel: highest high / lowest low over breakout period (excluding last bar)

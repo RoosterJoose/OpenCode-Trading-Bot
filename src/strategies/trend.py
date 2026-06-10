@@ -48,9 +48,6 @@ class TrendFollow(PerpStrategy):
         self.atr_chandelier_mult_short_alt = atr_chandelier_mult_short_alt
         self.psar_step = psar_step
         self.psar_max_af = psar_max_af
-        self.psar_switch_hours = psar_switch_hours
-        self.min_volume_usd = min_volume_usd
-        self.min_oi_usd = min_oi_usd
         self.cooldown_cycles = cooldown_cycles
         self.majors = majors or {"BTC", "ETH"}
         self.signal_tracker = signal_tracker
@@ -81,7 +78,8 @@ class TrendFollow(PerpStrategy):
             return None
 
         last = candles[-1]
-        if last.volume * last.close < self.min_volume_usd:
+        vol_min = self._get_threshold(asset, "volume_min_usd", self.min_volume_usd)
+        if last.volume * last.close < vol_min:
             return None
 
         # OI proxy gate — check avg 24h volume as liquidity proxy
@@ -105,7 +103,8 @@ class TrendFollow(PerpStrategy):
         cross_below = prev_fast >= prev_slow and ema_fast < ema_slow
         continuation_long = ema_fast > ema_slow and last.close > ema_fast
         continuation_short = ema_fast < ema_slow and last.close < ema_fast
-        near_ema = abs(last.close - ema_fast) / ema_fast <= 0.04 if ema_fast else False
+        near_ema_pct = self._get_threshold(asset, "near_ema_pct", 0.04)
+        near_ema = abs(last.close - ema_fast) / ema_fast <= near_ema_pct if ema_fast else False
         if not cross_above and not (continuation_long and near_ema):
             if not cross_below and not (continuation_short and near_ema):
                 return None

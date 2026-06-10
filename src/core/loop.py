@@ -209,6 +209,16 @@ class TradingLoop:
                 return
         except Exception as e:
             logger.debug("pause check failed: %s", e)
+        # Load dynamic thresholds from closed_loop.py and inject into strategies
+        try:
+            raw = self.store.get_state("dynamic_thresholds")
+            if raw:
+                thresholds = json.loads(raw) if isinstance(raw, str) else raw
+                for strat in self.strategies:
+                    if hasattr(strat, "set_dynamic_thresholds"):
+                        strat.set_dynamic_thresholds(thresholds)
+        except Exception as e:
+            logger.debug("dynamic thresholds: %s", e)
         self._import_file_intents()
         # 1. Fetch market data
         try:

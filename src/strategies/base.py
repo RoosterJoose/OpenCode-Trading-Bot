@@ -1,10 +1,21 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Any
 
 from src.core.types import PerpCandle, PerpPosition, RegimeType, Side, Signal
 
 
 class PerpStrategy(ABC):
+    def __init__(self):
+        self._dynamic_thresholds: dict = {}
+
+    def set_dynamic_thresholds(self, thresholds: dict) -> None:
+        """Inject per-asset threshold adjustments from closed_loop.py"""
+        self._dynamic_thresholds = thresholds or {}
+
+    def _get_threshold(self, asset: str, param: str, default: Any):
+        """Get a dynamic threshold for an asset+param, falling back to default."""
+        return self._dynamic_thresholds.get(asset, {}).get(param, default)
+
     @abstractmethod
     def name(self) -> str: ...
 
