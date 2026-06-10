@@ -199,6 +199,16 @@ class TradingLoop:
     async def _cycle(self, hl: ExchangeAdapter, exchange: PaperPerpExchange):
         if self._cycle_count % 5 == 0:
             logger.info("heartbeat cycle=%d", self._cycle_count)
+        # Auto-pause check (sharpe_tracker runs daily at 00:05 UTC)
+        try:
+            paused = self.store.get_state("bot_paused")
+            if paused == "true":
+                if self._cycle_count % 60 == 0:  # log once per hour
+                    reasons = self.store.get_state("pause_reasons") or "[]"
+                    logger.warning("BOT PAUSED by auto-pause logic: %s", reasons)
+                return
+        except Exception as e:
+            logger.debug("pause check failed: %s", e)
         self._import_file_intents()
         # 1. Fetch market data
         try:
