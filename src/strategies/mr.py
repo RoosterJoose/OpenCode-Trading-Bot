@@ -86,6 +86,19 @@ class MeanReversion(PerpStrategy):
         oversold_th, overbought_th = self._dynamic_rsi_thresholds(asset)
         is_oversold = rsi is not None and rsi <= oversold_th
         is_overbought = rsi is not None and rsi >= overbought_th
+
+        # NotebookLM round 10: Stochastic RSI hits 0/100 even in slow-bleed regimes
+        stoch_k = self._stoch_rsi(candles)
+        is_stoch_oversold = stoch_k is not None and stoch_k <= 0.20
+        is_stoch_overbought = stoch_k is not None and stoch_k >= 0.80
+
+        # Bollinger Band touch — adaptive to current volatility
+        bb_pos = self._bb_touch(candles)
+        is_bb_oversold = bb_pos is not None and bb_pos <= -0.95
+        is_bb_overbought = bb_pos is not None and bb_pos >= 0.95
+
+        is_oversold = is_oversold or is_stoch_oversold or is_bb_oversold
+        is_overbought = is_overbought or is_stoch_overbought or is_bb_overbought
         if not is_oversold and not is_overbought:
             return None
         is_long = is_oversold
@@ -148,6 +161,14 @@ class MeanReversion(PerpStrategy):
                 confidence += 0.2
                 sources.append("deep_overbought")
 
+        # NotebookLM round 10: confidence boost from stochastic RSI / BB touch
+        if is_stoch_oversold or is_stoch_overbought:
+            sources.append("stoch_rsi_extreme")
+            confidence += 0.05
+        if is_bb_oversold or is_bb_overbought:
+            sources.append("bb_touch")
+            confidence += 0.05
+
         component_sources = [f"local:{tag}"]
 
         # Altfins signal validation
@@ -202,7 +223,6 @@ class MeanReversion(PerpStrategy):
             "atr_pct": round(stop_pct * 100, 2),
             "sources": sources,
             "component_sources": component_sources,
-        "tp1": tp1, "tp2": tp2, "tp3": tp3,
         }
 
     def should_exit(
@@ -280,6 +300,62 @@ class MeanReversion(PerpStrategy):
         if avg_loss == 0:
             return 100.0
         return 100.0 - (100.0 / (1.0 + avg_gain / avg_loss))
+
+    @staticmethod
+    def _stoch_rsi(candles: list[PerpCandle], rsi_period: int = 14, stoch_period: int = 14) -> Optional[float]:
+        """Stochastic RSI: normalize RSI to its own trailing range (0-1).
+        Hits 0/100 extremes even in slow-bleed regimes where RSI stays mid-range."""
+        if len(candles) < rsi_period + stoch_period + 1:
+            return None
+        closes = [c.close for c in candles]
+
+        # Compute RSI series for last (stoch_period + 1) points
+        rsi_values: list[float] = []
+        for i in range(-(stoch_period + 1), 0):
+            if abs(i) < rsi_period + 1:
+                continue
+            g_sum, l_sum = 0.0, 0.0
+            for j in range(i - rsi_period, i):
+                if abs(j) >= len(closes):
+                    continue
+                d = closes[j] - closes[j - 1]
+                g_sum += max(d, 0)
+                l_sum += max(-d, 0)
+            if g_sum + l_sum == 0:
+                rsi_values.append(50.0)
+            elif l_sum == 0:
+                rsi_values.append(100.0)
+            else:
+                rs = (g_sum / rsi_period) / (l_sum / rsi_period)
+                rsi_values.append(100.0 - (100.0 / (1.0 + rs)))
+
+        if len(rsi_values) < 2:
+            return None
+        cur = rsi_values[-1]
+        mn = min(rsi_values)
+        mx = max(rsi_values)
+        if mx - mn < 1e-9:
+            return 0.5
+        return (cur - mn) / (mx - mn)
+
+    @staticmethod
+    def _bb_touch(candles: list[PerpCandle], period: int = 20, std_mult: float = 2.0) -> Optional[float]:
+        """Bollinger Band position. Returns -1.5 to +1.5: -1 = lower band, 0 = mid, +1 = upper."""
+        if len(candles) < period:
+            return None
+        closes = [c.close for c in candles[-period:]]
+        mid = sum(closes) / period
+        variance = sum((c - mid) ** 2 for c in closes) / period
+        sd = variance ** 0.5
+        if sd == 0:
+            return 0.0
+        upper = mid + std_mult * sd
+        lower = mid - std_mult * sd
+        last = closes[-1]
+        if upper == lower:
+            return 0.0
+        pos = (last - mid) / (upper - mid)
+        return max(-1.5, min(1.5, pos))
 
     def _atr(self, candles: list[PerpCandle]) -> float:
         if len(candles) < self.atr_period + 1:

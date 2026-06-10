@@ -46,6 +46,9 @@ from src.store.sqlite import Store
 from src.strategies.base import PerpStrategy
 from src.strategies.mr import MeanReversion
 from src.strategies.trend import TrendFollow
+from src.strategies.donchian import DonchianBreakout
+from src.strategies.xs_momentum import CrossSectionalMomentum
+from src.strategies.momentum import DriftMomentum
 
 logger = logging.getLogger("hermes.loop")
 
@@ -76,6 +79,9 @@ class TradingLoop:
         self.strategies: list[PerpStrategy] = [
             MeanReversion(signal_tracker=self.signal_tracker),
             TrendFollow(signal_tracker=self.signal_tracker),
+            DonchianBreakout(signal_tracker=self.signal_tracker),
+            CrossSectionalMomentum(signal_tracker=self.signal_tracker),
+            DriftMomentum(signal_tracker=self.signal_tracker),
         ]
 
         self.assets = list(
@@ -84,6 +90,7 @@ class TradingLoop:
             .get("assets", ASSET_UNIVERSE)
         )
         self.candle_cache: dict[str, list[PerpCandle]] = {}
+        self.candle_4h_cache: dict[str, list[PerpCandle]] = {}  # 4h aggregated for regime detection
         self.signal_cache: dict[str, list[Signal]] = defaultdict(list)
         self._stop_event = asyncio.Event()
         self._suggested_params: list[dict] = []
@@ -204,12 +211,15 @@ class TradingLoop:
         except Exception as e:
             logger.debug("fetch mids: %s", e)
 
-        # 2. Fetch candles (parallel)
+        # 2. Fetch candles (parallel) — 1h for signals, 4h for regime detection
         async def _fetch_one(asset: str) -> None:
             try:
-                candles = await hl.fetch_candles(asset, "1h", 200)
-                if candles:
-                    self.candle_cache[asset] = candles
+                candles_1h = await hl.fetch_candles(asset, "1h", 250)
+                if candles_1h:
+                    self.candle_cache[asset] = candles_1h
+                    # Build 4h aggregation for regime detection (NotebookLM round 10)
+                    if len(candles_1h) >= 200:
+                        self.candle_4h_cache[asset] = self._aggregate_to_4h(candles_1h)
             except Exception as e:
                 logger.debug("fetch candles %s: %s", asset, e)
         await asyncio.gather(*[_fetch_one(a) for a in self.assets])
@@ -323,6 +333,19 @@ class TradingLoop:
         except Exception as e:
             logger.debug("snapshot export: %s", e)
 
+        # 4b. Compute cross-sectional returns (NotebookLM round 10)
+        try:
+            xs_returns: dict[str, float] = {}
+            for asset in self.assets:
+                candles = self.candle_cache.get(asset, [])
+                if len(candles) >= 169:  # 7 days + 1
+                    ret = (candles[-1].close - candles[-168].close) / candles[-168].close
+                    xs_returns[asset] = ret
+            if xs_returns:
+                CrossSectionalMomentum.set_returns(xs_returns)
+        except Exception as e:
+            logger.debug("xs returns: %s", e)
+
         # 5. Process each asset
         for asset in self.assets:
             candles = self.candle_cache.get(asset, [])
@@ -404,8 +427,16 @@ class TradingLoop:
 
         # Dual regime (NotebookLM): primary (200-period) for sizing/risk,
         # secondary (50-period) for entry direction
-        primary_regime = self._infer_regime(candles, 200)
-        regime = self._infer_regime(candles, 50)  # fast secondary for entry
+        # Regime detection: use 4h aggregated candles (NotebookLM round 10)
+        # 1h Hurst only covers 2 days; 4h covers 8 days — matches trend timeframe
+        candles_4h = self.candle_4h_cache.get(asset, [])
+        if len(candles_4h) >= 50:
+            primary_regime = self._infer_regime(candles_4h, 50)
+            regime = self._infer_regime(candles_4h, 50)
+        else:
+            # Fallback to 1h while 4h cache warms up
+            primary_regime = self._infer_regime(candles, 200)
+            regime = self._infer_regime(candles, 50)
 
         # Dead market — skip entries entirely
         if regime == RegimeType.DEAD_MARKET and not pos:
@@ -624,6 +655,23 @@ class TradingLoop:
         return True, "accepted"
 
     @staticmethod
+    def _aggregate_to_4h(candles_1h: list[PerpCandle]) -> list[PerpCandle]:
+        """Aggregate 1h candles into 4h candles (4 × 1h = 1 × 4h)."""
+        if not candles_1h or len(candles_1h) < 4:
+            return []
+        out: list[PerpCandle] = []
+        for i in range(0, len(candles_1h) - 3, 4):
+            group = candles_1h[i : i + 4]
+            o = group[0].open
+            h = max(c.high for c in group)
+            l = min(c.low for c in group)
+            c = group[-1].close
+            v = sum(candle.volume for candle in group)
+            ts = group[0].timestamp
+            out.append(PerpCandle(open=o, high=h, low=l, close=c, volume=v, timestamp=ts))
+        return out
+
+    @staticmethod
     def _infer_regime(candles: list[PerpCandle], max_lookback: int = 50) -> RegimeType:
         if len(candles) < max_lookback:
             max_lookback = len(candles)
@@ -751,6 +799,13 @@ class TradingLoop:
         self.signal_tracker.record(pos.signal_source, pnl_pct > 0)
         for source in pos.component_sources:
             self.signal_tracker.record(source, pnl_pct > 0)
+
+        # Trigger cooldown on the strategy that owned this position
+        if pos.strategy:
+            for strat in self.strategies:
+                if strat.name() == pos.strategy and hasattr(strat, "on_exit"):
+                    strat.on_exit(asset)
+                    break
 
         trade = {
             "asset": asset,
