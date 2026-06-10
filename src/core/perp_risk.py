@@ -32,8 +32,8 @@ class PerpRiskManager:
         atr_leverage_cap_pct: float = 3.0,
         atr_stop_major: float = 2.0,
         atr_stop_alt: float = 3.0,
-        stop_min_pct: float = 1.5,
-        stop_max_pct: float = 4.0,
+        stop_min_pct: float = 2.0,
+        stop_max_pct: float = 5.0,
         funding_entry_score: float = 0.001,
     ):
         self.initial_equity = initial_equity

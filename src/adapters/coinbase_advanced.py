@@ -189,6 +189,9 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
                 volume=float(c.get("volume", 0)),
                 timestamp=ts,
             ))
+        # Coinbase CDE returns candles in DESCENDING order (newest first).
+        # Sort ASCENDING so candles[-1] is the most recent bar.
+        result.sort(key=lambda x: x.timestamp)
         self._candle_cache[asset] = result
         return result
 
