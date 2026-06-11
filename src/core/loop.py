@@ -99,6 +99,7 @@ class TradingLoop:
         self._altfins = None
         self._kalshi = None
         self._kalshi_funding = {}
+        self._strategy_budget = {}
 
     def _restore_paper_positions(self, exchange: PaperPerpExchange):
         positions = self.store.get_state("positions") or []
@@ -220,6 +221,15 @@ class TradingLoop:
                         strat.set_dynamic_thresholds(thresholds)
         except Exception as e:
             logger.debug("dynamic thresholds: %s", e)
+        # Load strategy budget from strategy_budget.py
+        self._strategy_budget = {}
+        try:
+            raw = self.store.get_state("strategy_budget")
+            if raw:
+                sb = json.loads(raw) if isinstance(raw, str) else raw
+                self._strategy_budget = sb.get("weights", {})
+        except Exception as e:
+            logger.debug("strategy budget: %s", e)
         self._import_file_intents()
         # 1. Fetch market data
         try:
@@ -512,6 +522,19 @@ class TradingLoop:
 
             if qty <= 0:
                 continue
+
+            # Strategy budget scaling (based on 30d Sharpe)
+            strat_name = strat.name()
+            budget_weight = self._strategy_budget.get(strat_name, 1.0)
+            if budget_weight <= 0:
+                logger.debug("%s %s: budget={budget_weight} — skipping", strat_name, asset)
+                continue
+            if budget_weight < 1.0:
+                qty = qty * budget_weight
+                logger.debug(
+                    "%s %s: budget=%s qty=%s -> %s",
+                    strat_name, asset, budget_weight, qty / budget_weight, qty,
+                )
 
             if side == Side.SHORT:
                 stop_price = entry_price * (1 + stop_pct / 100)

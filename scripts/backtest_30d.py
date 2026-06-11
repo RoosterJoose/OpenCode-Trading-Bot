@@ -1,143 +1,88 @@
 #!/usr/bin/env python3
-"""
-30-day backtest: runs each strategy on real candle data and compares PnL.
-
-This is NOT a simulation (which assumes you were in the trade). We compute:
-  - For each day in the last 30 days, check if the strategy would have entered
-  - If yes, simulate the entry/exit using the actual price action
-  - Track PnL, Sharpe, WR per strategy, per regime, per side
-
-Results written to state key: backtest_30d
-
-This runs daily at 00:15 UTC (after daily_reflection + closed_loop + sharpe_tracker).
-"""
-import asyncio
-import json
-import math
-import sqlite3
-import sys
+"""30-day backtest from trade DB only. No bot imports needed."""
+import json, math, sqlite3, sys
 from collections import defaultdict
-from datetime import datetime, timezone, timedelta
-from pathlib import Path
-from typing import Optional
+from datetime import datetime, timedelta, timezone
 
-from src.core.types import PerpCandle, PerpPosition, RegimeType, Side, Signal
-from src.strategies.trend import TrendFollow
-from src.strategies.mr import MeanReversion
-from src.strategies.donchian import DonchianBreakout
+DB_PATH = sys.argv[1] if len(sys.argv) > 1 else "/opt/hermes-trading-bot/data/hermes.db"
+conn = sqlite3.connect(DB_PATH)
+conn.row_factory = sqlite3.Row
+cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+trades = list(conn.execute(
+    "SELECT strategy, side, pnl_dollars, r_multiple, exit_reason, entry_time "
+    "FROM trades WHERE entry_time >= ? AND strategy NOT IN ('unknown', '')",
+    (cutoff,),
+))
 
+strategies = ["trend", "donchian", "mr"]
+by_strat = {s: {"trades": 0, "wins": 0, "pnl": 0.0, "r_sum": 0.0} for s in strategies}
+by_side = {"LONG": {"trades": 0, "wins": 0, "pnl": 0.0},
+           "SHORT": {"trades": 0, "wins": 0, "pnl": 0.0}}
+by_exit: dict[str, dict] = {}
+daily_pnl: dict[str, float] = {}
 
-def compute_sharpe(returns: list[float]) -> float:
-    if len(returns) < 5:
+for t in trades:
+    s = t["strategy"]
+    if s not in by_strat:
+        continue
+    by_strat[s]["trades"] += 1
+    by_strat[s]["wins"] += 1 if t["pnl_dollars"] > 0 else 0
+    by_strat[s]["pnl"] += t["pnl_dollars"]
+    by_strat[s]["r_sum"] += t["r_multiple"] or 0
+
+    side = t["side"]
+    if side in by_side:
+        by_side[side]["trades"] += 1
+        by_side[side]["wins"] += 1 if t["pnl_dollars"] > 0 else 0
+        by_side[side]["pnl"] += t["pnl_dollars"]
+
+    er = t["exit_reason"] or "unknown"
+    if er not in by_exit:
+        by_exit[er] = {"trades": 0, "pnl": 0.0, "avg": 0.0}
+    by_exit[er]["trades"] += 1
+    by_exit[er]["pnl"] += t["pnl_dollars"]
+
+    day = t["entry_time"][:10]
+    daily_pnl[day] = daily_pnl.get(day, 0) + t["pnl_dollars"]
+
+for er in by_exit:
+    by_exit[er]["avg"] = round(by_exit[er]["pnl"] / by_exit[er]["trades"], 3)
+
+total_pnl = sum(v["pnl"] for v in by_strat.values())
+total_trades = sum(v["trades"] for v in by_strat.values())
+total_wins = sum(v["wins"] for v in by_strat.values())
+
+# Sharpe from daily PnL
+def sharpe(returns):
+    n = len(returns)
+    if n < 5:
         return 0.0
-    mean = sum(returns) / len(returns)
-    var = sum((r - mean) ** 2 for r in returns) / len(returns)
-    std = math.sqrt(var) if var > 0 else 1e-9
-    return (mean / std) * math.sqrt(365)
+    m = sum(returns) / n
+    v = sum((r - m) ** 2 for r in returns) / n
+    s = math.sqrt(v) if v > 0 else 1e-9
+    return (m / s) * math.sqrt(365)
 
+ds = sharpe(list(daily_pnl.values()))
+wr = total_wins / total_trades if total_trades else 0
 
-def main(db_path: str):
-    db = Path(db_path)
-    conn = sqlite3.connect(str(db))
-    conn.row_factory = sqlite3.Row
-    now = datetime.now(timezone.utc)
-    today = now.strftime("%Y-%m-%d")
-    thirty_days_ago = (now - timedelta(days=30)).isoformat()
+result = {
+    "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+    "total_trades_30d": total_trades,
+    "total_pnl_30d": round(total_pnl, 2),
+    "total_wr_30d": round(wr, 3),
+    "daily_sharpe_30d": round(ds, 3),
+    "by_strategy": by_strat,
+    "by_side": by_side,
+    "by_exit_reason": by_exit,
+    "trading_days": len(daily_pnl),
+}
+conn.execute("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)",
+             ("backtest_30d", json.dumps(result)))
+conn.commit()
 
-    # Load real trade data — these are the ACTUAL trades the bot made
-    trades = list(conn.execute(
-        """SELECT id, entry_time, exit_time, asset, side, strategy,
-                  ROUND(entry_price, 2) as entry_price,
-                  ROUND(exit_price, 2) as exit_price,
-                  ROUND(pnl_dollars, 4) as pnl,
-                  ROUND(r_multiple, 3) as r,
-                  exit_reason
-           FROM trades
-           WHERE entry_time >= ? AND strategy != 'unknown'
-           ORDER BY entry_time""",
-        (thirty_days_ago,),
-    ))
-
-    # Per-strategy stats
-    strategies = ["trend", "donchian", "mr"]
-    by_strat = {s: {"trades": 0, "wins": 0, "pnl": 0.0, "r_sum": 0.0, "daily_returns": []} for s in strategies}
-    by_side = {"LONG": {"trades": 0, "wins": 0, "pnl": 0.0}, "SHORT": {"trades": 0, "wins": 0, "pnl": 0.0}}
-    by_regime = defaultdict(lambda: {"trades": 0, "wins": 0, "pnl": 0.0})
-    by_exit = defaultdict(lambda: {"trades": 0, "pnl": 0.0})
-    daily_pnl = defaultdict(float)
-
-    for t in trades:
-        strat = t["strategy"]
-        if strat not in by_strat:
-            continue
-        s = by_strat[strat]
-        s["trades"] += 1
-        s["wins"] += 1 if t["pnl"] > 0 else 0
-        s["pnl"] += t["pnl"]
-        s["r_sum"] += t["r"] or 0
-        day = t["entry_time"][:10]
-        s["daily_returns"].append(t["pnl"])
-
-        with conn:
-            # Try to get regime from trades if available (it might be set after our deploy)
-            pass
-
-        by_side[t["side"]]["trades"] += 1
-        by_side[t["side"]]["wins"] += 1 if t["pnl"] > 0 else 0
-        by_side[t["side"]]["pnl"] += t["pnl"]
-        by_exit[t["exit_reason"] or "unknown"]["trades"] += 1
-        by_exit[t["exit_reason"] or "unknown"]["pnl"] += t["pnl"]
-        daily_pnl[day] += t["pnl"]
-
-    # Compute Sharpe per strategy
-    for strat, data in by_strat.items():
-        if data["trades"] >= 5:
-            data["sharpe"] = round(compute_sharpe(data["daily_returns"]), 3)
-            data["wr"] = round(data["wins"] / data["trades"], 3) if data["trades"] > 0 else 0
-            data["avg_r"] = round(data["r_sum"] / data["trades"], 3) if data["trades"] > 0 else 0
-            data["avg_pnl"] = round(data["pnl"] / data["trades"], 3) if data["trades"] > 0 else 0
-        del data["daily_returns"]
-
-    # Total stats
-    total_pnl = sum(v["pnl"] for v in by_strat.values())
-    total_trades = sum(v["trades"] for v in by_strat.values())
-    total_wins = sum(v["wins"] for v in by_strat.values())
-    daily_sharpe = compute_sharpe(list(daily_pnl.values()))
-
-    result = {
-        "date": today,
-        "timestamp": now.isoformat(),
-        "total_trades_30d": total_trades,
-        "total_pnl_30d": round(total_pnl, 2),
-        "total_wr_30d": round(total_wins / total_trades, 3) if total_trades > 0 else 0,
-        "daily_sharpe_30d": round(daily_sharpe, 3),
-        "by_strategy": by_strat,
-        "by_side": by_side,
-        "by_exit_reason": dict(by_exit),
-        "trading_days": len(daily_pnl),
-        "best_day_pnl": round(max(daily_pnl.values()), 2) if daily_pnl else 0,
-        "worst_day_pnl": round(min(daily_pnl.values()), 2) if daily_pnl else 0,
-        "today_pnl": round(daily_pnl.get(today, 0), 2),
-    }
-
-    # Save to state
-    key = "backtest_30d"
-    conn.execute(
-        "INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)",
-        (key, json.dumps(result, indent=2)),
-    )
-    conn.commit()
-
-    print(f"[{today}] 30-day backtest ({total_trades} trades, ${total_pnl:.2f} PnL)")
-    print(f"  Daily Sharpe: {daily_sharpe:.3f} | WR: {result['total_wr_30d']:.1%}")
-    for strat, data in by_strat.items():
-        print(f"  {strat}: {data['trades']} trades, {data['wins']} wins, ${data['pnl']:.2f}, "
-              f"sharpe={data.get('sharpe', 'N/A')}, avg_r={data.get('avg_r', 'N/A')}")
-    print(f"  By side: LONG=${by_side['LONG']['pnl']:.2f} SHORT=${by_side['SHORT']['pnl']:.2f}")
-    print(f"  By exit: {json.dumps(by_exit, indent=4)}")
-    conn.close()
-
-
-if __name__ == "__main__":
-    db = sys.argv[1] if len(sys.argv) > 1 else "/opt/hermes-trading-bot/data/hermes.db"
-    main(db)
+print(f"30d backtest: {total_trades} trades, ${total_pnl:.2f} PnL, Sharpe {ds:.3f}, WR {wr:.1%}")
+for s, d in by_strat.items():
+    avg = d["pnl"] / d["trades"] if d["trades"] else 0
+    avg_r = d["r_sum"] / d["trades"] if d["trades"] else 0
+    print(f"  {s}: {d['trades']}t, ${d['pnl']:.2f}, avg=${avg:.2f}, avg_r={avg_r:.3f}")
+conn.close()
