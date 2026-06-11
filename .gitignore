@@ -10,3 +10,8 @@ dist/
 build/
 .tmp/
 .venv/
+.env_key
+scripts/_d2.py
+scripts/_debug_adapter_jwt.py
+src/core/mr.py
+src/core/trend.py

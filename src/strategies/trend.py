@@ -50,6 +50,7 @@ class TrendFollow(PerpStrategy):
         self.min_oi_usd = min_oi_usd
         self.psar_step = psar_step
         self.psar_max_af = psar_max_af
+        self.psar_switch_hours = psar_switch_hours
         self.cooldown_cycles = cooldown_cycles
         self.majors = majors or {"BTC", "ETH"}
         self.signal_tracker = signal_tracker
@@ -273,7 +274,7 @@ class TrendFollow(PerpStrategy):
             chandelier = max(c.high for c in candles[-self.atr_period:]) - stop_dist
 
         # Switch to PSAR after position has been open > N hours
-        age_hours = (datetime.now(timezone.utc) - position.entry_time).total_seconds() / 3600
+        age_hours = (datetime.now() - position.entry_time).total_seconds() / 3600
         if age_hours > self.psar_switch_hours:
             psar = self._psar(candles)
             if psar is not None:

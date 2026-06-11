@@ -134,14 +134,14 @@ def main(db_path: str):
     max_dd_30d = compute_max_drawdown(equity_curve) if equity_curve else 0.0
 
     # ── 4. Today's P&L and decision ─────────────────────────────────────────
-    today_pnl = sum(r["pnl"] for r in conn.execute(
+    today_pnl = sum((r["pnl"] or 0) for r in conn.execute(
         """SELECT ROUND(SUM(pnl_dollars),4) as pnl
            FROM trades WHERE date(entry_time) = ?""",
         (today,),
     ).fetchall())
 
     # Last 7 days PnL for weekly drawdown check
-    week_pnl = sum(r["pnl"] for r in conn.execute(
+    week_pnl = sum((r["pnl"] or 0) for r in conn.execute(
         """SELECT ROUND(SUM(pnl_dollars),4) as pnl
            FROM trades WHERE entry_time >= ?""",
         (seven_days_ago,),

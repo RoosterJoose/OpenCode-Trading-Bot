@@ -14,7 +14,7 @@ class PerpStrategy(ABC):
 
     def _get_threshold(self, asset: str, param: str, default: Any):
         """Get a dynamic threshold for an asset+param, falling back to default."""
-        raw = self._dynamic_thresholds.get(asset, {}).get(param, default)
+        raw = getattr(self, "_dynamic_thresholds", {}).get(asset, {}).get(param, default)
         if isinstance(raw, dict) and "value" in raw:
             return raw["value"]
         return raw

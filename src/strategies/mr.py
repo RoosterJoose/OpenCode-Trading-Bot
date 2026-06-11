@@ -255,12 +255,6 @@ class MeanReversion(PerpStrategy):
         if r_mult >= self.tp3_r_mult:
             self._cooldowns[asset] = self.cooldown_bars
             return "tp3", current_price
-        if r_mult >= self.tp2_r_mult:
-            self._cooldowns[asset] = self.cooldown_bars
-            return "tp2", current_price
-        if r_mult >= self.tp1_r_mult:
-            self._cooldowns[asset] = self.cooldown_bars
-            return "tp1", current_price
 
         if funding_rate > self.funding_halt_threshold:
             if not is_short:
