@@ -165,7 +165,8 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
         await self._http.aclose()
 
     async def fetch_candles(
-        self, asset: str, interval: str = "1h", limit: int = 200
+        self, asset: str, interval: str = "1h", limit: int = 200,
+        start_time: int = 0, end_time: int = 0,
     ) -> list[PerpCandle]:
         granularity_map = {
             "1m": "ONE_MINUTE", "5m": "FIVE_MINUTE", "15m": "FIFTEEN_MINUTE",
@@ -176,6 +177,9 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
         pid = self._product_id(asset)
         path = f"/products/{pid}/candles"
         params = {"granularity": gran, "limit": limit}
+        if start_time and end_time:
+            params["start"] = start_time
+            params["end"] = end_time
         data = await self._request("GET", path, params)
         candles = data.get("candles", [])
         result: list[PerpCandle] = []

@@ -8,6 +8,7 @@ Usage:
 """
 import sys, os, json, math, itertools, datetime as dt
 from collections import defaultdict
+from pathlib import Path
 from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -202,18 +203,50 @@ async def main():
               "PEPE", "SHIB", "HYPE", "ONDO", "ENA"]
 
     print("Loading candles...")
+
+    # Try loading from historical_candles.json first
+    json_path = Path("/opt/hermes-trading-bot/data/historical_candles.json")
     candle_map = {}
-    for asset in assets:
-        try:
-            c = await adapter.fetch_candles(asset, "1h", 300)
-            if c and len(c) >= 100:
-                candle_map[asset] = c
-                print(f"  {asset}: {len(c)} candles")
+    limit_flag = next((int(sys.argv[i + 1]) for i, a in enumerate(sys.argv) if a == "--limit" and i + 1 < len(sys.argv)), 0)
+    if json_path.exists():
+        print(f"  Loading from {json_path}...")
+        with open(json_path) as f:
+            data = json.load(f)
+        for asset in data.get("candles", {}):
+            candles_raw = data["candles"][asset]
+            if limit_flag > 0 and len(candles_raw) > limit_flag:
+                candles_raw = candles_raw[-limit_flag:]
+            candles = [
+                PerpCandle(
+                    open=c["o"], high=c["h"], low=c["l"], close=c["c"],
+                    volume=c["v"], timestamp=c["t"],
+                ) for c in candles_raw
+            ]
+            if len(candles) >= 100:
+                # Sort by timestamp ascending
+                candles.sort(key=lambda x: x.timestamp)
+                candle_map[asset] = candles
+                print(f"  {asset}: {len(candles)} candles")
             else:
-                print(f"  {asset}: insufficient data ({len(c) if c else 0})")
-        except Exception as e:
-            print(f"  {asset}: error: {e}")
-    print(f"Loaded {len(candle_map)}/{len(assets)} assets")
+                print(f"  {asset}: insufficient data ({len(candles)})")
+
+    if not candle_map:
+        # Fallback: load from adapter
+        assets = ["BTC", "ETH", "SOL", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT",
+                  "AAVE", "LTC", "NEAR", "SUI", "BNB", "XLM", "HBAR", "BCH", "ZEC",
+                  "PEPE", "SHIB", "HYPE", "ONDO", "ENA"]
+        for asset in assets:
+            try:
+                c = await adapter.fetch_candles(asset, "1h", 300)
+                if c and len(c) >= 100:
+                    candle_map[asset] = c
+                    print(f"  {asset}: {len(c)} candles (live)")
+                else:
+                    print(f"  {asset}: insufficient data ({len(c) if c else 0})")
+            except Exception as e:
+                print(f"  {asset}: error: {e}")
+
+    print(f"Loaded {len(candle_map)} assets")
 
     if not candle_map:
         print("ERROR: No candle data loaded. Cannot run backtest.")
