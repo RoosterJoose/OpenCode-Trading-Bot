@@ -288,7 +288,7 @@ async def main():
 
     # Save
     with open("/tmp/backtest_result.json", "w") as f:
-        json.dump(results, f, indent=2)
+        json.dump(best_results if sweep and best_results else results, f, indent=2)
     print("Saved to /tmp/backtest_result.json")
 
 
