@@ -7,6 +7,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+async def _mock_get_funding_rate(asset: str) -> float:
+    return 0.0
+
+def _mock_exchange(latest_funding: dict | None = None) -> SimpleNamespace:
+    ns = SimpleNamespace()
+    ns._latest_funding = latest_funding or {}
+    ns.get_funding_rate = _mock_get_funding_rate
+    return ns
+
 from src.adapters.paper_perp import PaperPerpExchange
 from src.core.intents import TradeIntent
 from src.core.loop import MIN_ENTRY_CONFIDENCE, TradingLoop
@@ -97,7 +106,7 @@ class RegressionTests(unittest.TestCase):
                 row = self._intent_row(expires_delta=-1)
                 intent = TradeIntent.from_row(row)
                 try:
-                    return await loop._execute_intent(intent, ex, SimpleNamespace(_latest_funding={}))
+                    return await loop._execute_intent(intent, ex, _mock_exchange({}))
                 finally:
                     loop.store.close()
 
@@ -115,7 +124,7 @@ class RegressionTests(unittest.TestCase):
                 row = self._intent_row()
                 intent = TradeIntent.from_row(row)
                 try:
-                    ok, reason = await loop._execute_intent(intent, ex, SimpleNamespace(_latest_funding={"BTC": 0.0}))
+                    ok, reason = await loop._execute_intent(intent, ex, _mock_exchange({"BTC": 0.0}))
                     return ok, reason, ex.positions.get("BTC")
                 finally:
                     loop.store.close()
@@ -134,7 +143,7 @@ class RegressionTests(unittest.TestCase):
                 ex.update_price("BTC", 100.0)
                 intent = TradeIntent.from_row(row)
                 try:
-                    return await loop._execute_intent(intent, ex, SimpleNamespace(_latest_funding={"BTC": 0.0}))
+                    return await loop._execute_intent(intent, ex, _mock_exchange({"BTC": 0.0}))
                 finally:
                     loop.store.close()
 
@@ -148,7 +157,7 @@ class RegressionTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("stop_distance_out_of_bounds", reason)
 
-    def _intent_row(self, confidence=0.8, stop=98.0, expires_delta=30):
+    def _intent_row(self, confidence=0.8, stop=97.0, expires_delta=30):
         now = datetime.now(timezone.utc)
         payload = {
             "idempotency_key": f"test:BTC:{now.timestamp()}:{confidence}:{stop}:{expires_delta}",

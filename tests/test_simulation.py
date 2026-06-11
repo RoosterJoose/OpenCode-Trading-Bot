@@ -128,15 +128,11 @@ class SimulationTests(unittest.TestCase):
         self.assertGreaterEqual(confidence, 0.70, f"Confidence {confidence:.2f} < 0.70")
 
     def test_mr_short_entry_on_overbought(self):
-        """MR strategy emits SHORT with confidence >= 0.70 when RSI > 72."""
+        """MR strategy emits SHORT with confidence >= 0.70 in overbought regime."""
         c = neutral_drift_candles(106, 80.0)
-        # Add 14 consecutive up candles to push RSI > 72
-        for i in range(14):
-            last = c[-1]
-            c.append(PerpCandle(len(c), last.close, last.close * 1.008, last.close * 0.995, last.close * 1.006, 1_000_000))
-        # Final overbought spike
+        # Single massive spike creates extreme RSI without creating 48-bar drift
         last = c[-1]
-        c.append(PerpCandle(len(c), last.close, last.close * 1.03, last.close * 0.99, last.close * 1.02, 1_000_000))
+        c.append(PerpCandle(len(c), last.close, last.close * 1.20, last.close * 0.98, last.close * 1.15, 1_000_000))
         strat = MeanReversion()
         result = strat.should_enter("BTC", c, [], RegimeType.MEAN_REVERTING, None, -0.001)
         self.assertIsNotNone(result, "MR should enter SHORT when overbought")
@@ -145,15 +141,11 @@ class SimulationTests(unittest.TestCase):
         self.assertGreaterEqual(confidence, 0.70, f"Confidence {confidence:.2f} < 0.70")
 
     def test_mr_long_entry_on_oversold(self):
-        """MR strategy emits LONG with confidence >= 0.70 when RSI < 28."""
+        """MR strategy emits LONG with confidence >= 0.70 in oversold regime."""
         c = neutral_drift_candles(106, 100.0)
-        # Add 14 consecutive down candles to push RSI < 28
-        for i in range(14):
-            last = c[-1]
-            c.append(PerpCandle(len(c), last.close, last.close * 0.995, last.close * 0.99, last.close * 0.993, 1_000_000))
-        # Final oversold dip
+        # Single massive drop creates extreme RSI without creating 48-bar drift
         last = c[-1]
-        c.append(PerpCandle(len(c), last.close, last.close * 0.98, last.close * 0.95, last.close * 0.97, 1_000_000))
+        c.append(PerpCandle(len(c), last.close, last.close * 0.80, last.close * 0.75, last.close * 0.85, 1_000_000))
         strat = MeanReversion()
         result = strat.should_enter("BTC", c, [], RegimeType.MEAN_REVERTING, None, -0.001)
         self.assertIsNotNone(result, "MR should enter LONG when oversold")

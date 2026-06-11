@@ -467,13 +467,12 @@ class TradingLoop:
         # Regime detection: use 4h aggregated candles (NotebookLM round 10)
         # 1h Hurst only covers 2 days; 4h covers 8 days — matches trend timeframe
         candles_4h = self.candle_4h_cache.get(asset, [])
-        if len(candles_4h) >= 50:
-            primary_regime = self._infer_regime(candles_4h, 50)
-            regime = self._infer_regime(candles_4h, 50)
+        if len(candles_4h) >= 30:
+            primary_regime = self._infer_regime(candles_4h, 30)
+            regime = self._infer_regime(candles_4h, 30)
         else:
-            # Fallback to 1h while 4h cache warms up
-            primary_regime = self._infer_regime(candles, 200)
-            regime = self._infer_regime(candles, 50)
+            primary_regime = self._infer_regime(candles, 50)
+            regime = self._infer_regime(candles, 30)
 
         # Dead market — skip entries entirely
         if regime == RegimeType.DEAD_MARKET and not pos:
@@ -725,7 +724,7 @@ class TradingLoop:
     def _infer_regime(candles: list[PerpCandle], max_lookback: int = 50) -> RegimeType:
         if len(candles) < max_lookback:
             max_lookback = len(candles)
-        if max_lookback < 50:
+        if max_lookback < 30:
             return RegimeType.RANDOM_WALK
         candles = candles[-max_lookback:]
         closes = [c.close for c in candles]
@@ -776,7 +775,7 @@ class TradingLoop:
     @staticmethod
     def _hurst(prices: list[float]) -> float:
         n = len(prices)
-        if n < 100:
+        if n < 30:
             return 0.5
         max_lag = min(n // 2, 100)
         log_lags = []

@@ -11,6 +11,7 @@ Uses NotebookLM-verified parameters:
 
 import math
 from collections import defaultdict
+from datetime import datetime, timezone
 from typing import Optional
 
 from src.core.types import PerpCandle, PerpPosition, RegimeType, Side, Signal
@@ -28,6 +29,7 @@ class MeanReversion(PerpStrategy):
         tp1_r_mult: float = 0.5,
         tp2_r_mult: float = 1.5,
         tp3_r_mult: float = 3.0,
+        max_hold_hours: float = 48.0,
         majors: set | None = None,
         signal_tracker=None,
     ):
@@ -39,6 +41,7 @@ class MeanReversion(PerpStrategy):
         self.tp1_r_mult = tp1_r_mult
         self.tp2_r_mult = tp2_r_mult
         self.tp3_r_mult = tp3_r_mult
+        self.max_hold_hours = max_hold_hours
         self.majors = majors or {"BTC", "ETH"}
         self.signal_tracker = signal_tracker
         self._cooldowns: dict[str, int] = {}
@@ -90,13 +93,13 @@ class MeanReversion(PerpStrategy):
 
         # NotebookLM round 10: Stochastic RSI hits 0/100 even in slow-bleed regimes
         stoch_k = self._stoch_rsi(candles)
-        is_stoch_oversold = stoch_k is not None and stoch_k <= 0.20
-        is_stoch_overbought = stoch_k is not None and stoch_k >= 0.80
+        is_stoch_oversold = stoch_k is not None and stoch_k <= 0.10
+        is_stoch_overbought = stoch_k is not None and stoch_k >= 0.90
 
         # Bollinger Band touch — adaptive to current volatility
         bb_pos = self._bb_touch(candles)
-        is_bb_oversold = bb_pos is not None and bb_pos <= -0.95
-        is_bb_overbought = bb_pos is not None and bb_pos >= 0.95
+        is_bb_oversold = bb_pos is not None and bb_pos <= -0.90
+        is_bb_overbought = bb_pos is not None and bb_pos >= 0.90
 
         is_oversold = is_oversold or is_stoch_oversold or is_bb_oversold
         is_overbought = is_overbought or is_stoch_overbought or is_bb_overbought
@@ -242,6 +245,13 @@ class MeanReversion(PerpStrategy):
             elif not is_short and current_price <= sl:
                 return "stop_loss", current_price
 
+        if candles and position.entry_time:
+            now = datetime.now() if position.entry_time.tzinfo is None else datetime.now(timezone.utc)
+            age_hours = (now - position.entry_time).total_seconds() / 3600
+            if age_hours > self.max_hold_hours:
+                self._cooldowns[asset] = self.cooldown_bars
+                return "time_exit", current_price
+
         entry = position.entry_price
         if entry <= 0:
             return None
@@ -271,7 +281,7 @@ class MeanReversion(PerpStrategy):
 
     def _dynamic_rsi_thresholds(self, asset: str) -> tuple[float, float]:
         history = self._rsi_history.get(asset, [])
-        if len(history) < 50:
+        if len(history) < 20:
             return self.rsi_oversold, 100 - self.rsi_oversold
         sorted_vals = sorted(history)
         n = len(sorted_vals)
