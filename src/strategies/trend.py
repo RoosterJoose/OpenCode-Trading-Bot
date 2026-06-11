@@ -46,6 +46,8 @@ class TrendFollow(PerpStrategy):
         self.atr_chandelier_mult_long_alt = atr_chandelier_mult_long_alt
         self.atr_chandelier_mult_short_major = atr_chandelier_mult_short_major
         self.atr_chandelier_mult_short_alt = atr_chandelier_mult_short_alt
+        self.min_volume_usd = min_volume_usd
+        self.min_oi_usd = min_oi_usd
         self.psar_step = psar_step
         self.psar_max_af = psar_max_af
         self.cooldown_cycles = cooldown_cycles

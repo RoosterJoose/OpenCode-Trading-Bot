@@ -306,38 +306,40 @@ class MeanReversion(PerpStrategy):
     def _stoch_rsi(candles: list[PerpCandle], rsi_period: int = 14, stoch_period: int = 14) -> Optional[float]:
         """Stochastic RSI: normalize RSI to its own trailing range (0-1).
         Hits 0/100 extremes even in slow-bleed regimes where RSI stays mid-range."""
-        if len(candles) < rsi_period + stoch_period + 1:
+        needed = rsi_period + stoch_period + 1
+        if len(candles) < needed:
             return None
         closes = [c.close for c in candles]
 
-        # Compute RSI series for last (stoch_period + 1) points
+        # Compute RSI for each window in the trailing stoch_period + 1 positions
         rsi_values: list[float] = []
-        for i in range(-(stoch_period + 1), 0):
-            if abs(i) < rsi_period + 1:
-                continue
-            g_sum, l_sum = 0.0, 0.0
-            for j in range(i - rsi_period, i):
-                if abs(j) >= len(closes):
-                    continue
-                d = closes[j] - closes[j - 1]
-                g_sum += max(d, 0)
-                l_sum += max(-d, 0)
-            if g_sum + l_sum == 0:
-                rsi_values.append(50.0)
-            elif l_sum == 0:
-                rsi_values.append(100.0)
-            else:
-                rs = (g_sum / rsi_period) / (l_sum / rsi_period)
-                rsi_values.append(100.0 - (100.0 / (1.0 + rs)))
+        for k in range(stoch_period + 1):
+            start = -(needed - k)
+            end = start + rsi_period
+            if start < 0 and end <= 0:
+                g_sum, l_sum = 0.0, 0.0
+                for j in range(start, end):
+                    if abs(j + 1) < len(closes) and abs(j) < len(closes):
+                        d = closes[j + 1] - closes[j]
+                        g_sum += max(d, 0.0)
+                        l_sum += max(-d, 0.0)
+                if g_sum + l_sum == 0:
+                    rsi_values.append(50.0)
+                elif l_sum == 0:
+                    rsi_values.append(100.0)
+                else:
+                    rs = g_sum / l_sum
+                    rsi_values.append(100.0 - 100.0 / (1.0 + rs))
 
         if len(rsi_values) < 2:
             return None
-        cur = rsi_values[-1]
-        mn = min(rsi_values)
-        mx = max(rsi_values)
-        if mx - mn < 1e-9:
-            return 0.5
-        return (cur - mn) / (mx - mn)
+        min_rsi = min(rsi_values)
+        max_rsi = max(rsi_values)
+        if max_rsi - min_rsi < 0.1:
+            return None  # No range — can't compute
+        latest_rsi = rsi_values[-1]
+        stoch = (latest_rsi - min_rsi) / (max_rsi - min_rsi)
+        return round(stoch, 4)
 
     @staticmethod
     def _bb_touch(candles: list[PerpCandle], period: int = 20, std_mult: float = 2.0) -> Optional[float]:

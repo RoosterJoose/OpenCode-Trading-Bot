@@ -98,6 +98,7 @@ class TradingLoop:
         self._altfins_cycle = 0
         self._altfins = None
         self._kalshi = None
+        self._kalshi_funding = {}
 
     def _restore_paper_positions(self, exchange: PaperPerpExchange):
         positions = self.store.get_state("positions") or []
@@ -245,6 +246,7 @@ class TradingLoop:
         await asyncio.gather(*[_fetch_one(a) for a in self.assets])
 
         # 2a. Kalshi data supplement (parallel, fills gaps)
+        self._kalshi_funding = {}
         if self._kalshi:
             try:
                 kalshi_mids = await self._kalshi.fetch_all_mids()
@@ -256,6 +258,7 @@ class TradingLoop:
                 for asset, oi in kalshi_oi.items():
                     exchange.update_open_interest(asset, oi)
                 kalshi_fr = await self._kalshi.fetch_funding()
+                self._kalshi_funding = kalshi_fr
                 for asset, rate in kalshi_fr.items():
                     exchange.update_funding(asset, rate)
             except Exception as e:
@@ -424,6 +427,10 @@ class TradingLoop:
         price = await exchange.fetch_price(asset)
 
         funding_rate = await hl.get_funding_rate(asset)
+        if self._kalshi and self._kalshi_funding:
+            kalshi_fr = self._kalshi_funding.get(asset)
+            if kalshi_fr is not None:
+                funding_rate = max(funding_rate, kalshi_fr, key=abs) if funding_rate else kalshi_fr
         oi_vel = self.risk.oi_velocity(asset)
         altfins_sigs = self.signal_cache.get(asset, [])
 
