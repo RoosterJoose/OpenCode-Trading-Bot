@@ -1,71 +1,75 @@
 #!/usr/bin/env python3
 """
-Strategy budget allocator.
-Reads historical backtest results and allocates risk capital per strategy.
-Seeds live allocator with backtest Sharpe so MR isn't stuck at 2.6% forever.
+Strategy budget allocator — dual-window blend.
+Runs backtests at 1000c (recent regime) and 4000c (long-term),
+blends them 60/40, caps any strat at 50% max, floors at 5% min.
 
 Usage:
     python3 scripts/strategy_budget.py [--run-backtest]
-
-Writes to state key "strategy_budget":
-    {"weights": {"mr": 0.7, "trend": 0.1, "donchian": 0.1, "drift_momentum": 0.1}, "source": "backtest_1000_3pct"}
 """
 import json, sys, subprocess, math
 from pathlib import Path
 
 DB_PATH = Path("/opt/hermes-trading-bot/data/hermes.db")
-BACKTEST_RESULT = Path("/tmp/backtest_result.json")
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+BACKTEST_SCRIPT = str(PROJECT_DIR / "scripts/historical_backtest.py")
 
-# Default: equal split when no data
 DEFAULT_WEIGHTS = {"mr": 0.20, "trend": 0.20, "donchian": 0.20, "drift_momentum": 0.20, "xs_momentum": 0.20}
 
-STRATEGY_KEY_MAP = {
-}
+ALL_STRATS = ["trend", "mr", "donchian", "xs_momentum", "drift_momentum"]
 
-def run_backtest():
-    """Run historical backtest with 1000-candle limit (proven fast)."""
-    print("  Running backtest (1000 candles, 3% stop)...")
+def run_backtest(limit: int, stop_pct: float = 3.0) -> dict:
+    """Run single-stop backtest and return results dict."""
+    print(f"  Running backtest ({limit}c, {stop_pct:.0f}% stop)...")
     result = subprocess.run(
-        [sys.executable, "scripts/historical_backtest.py", "--limit", "1000"],
+        [sys.executable, BACKTEST_SCRIPT, "--limit", str(limit)],
         capture_output=True, text=True, timeout=300,
     )
     if result.returncode != 0:
-        print(f"  Backtest failed (rc={result.returncode}): {result.stderr[:200]}")
-        return None
-    print(f"  Backtest output:\n{result.stdout[-500:]}")
-    if BACKTEST_RESULT.exists():
-        with open(BACKTEST_RESULT) as f:
+        print(f"  FAILED (rc={result.returncode}): {result.stderr[:200]}")
+        return {}
+    
+    # Parse stdout for key numbers
+    lines = result.stdout.split("\n")
+    print(f"  OK ({len(result.stdout)} chars)")
+    for line in lines:
+        line = line.strip()
+        if any(line.startswith(s + ":") for s in ALL_STRATS):
+            print(f"    {line}")
+    
+    # data is saved to /tmp/backtest_result.json
+    result_path = Path("/tmp/backtest_result.json")
+    if result_path.exists():
+        with open(result_path) as f:
             return json.load(f)
-    return None
+    return {}
 
-def compute_budget(backtest_data: dict) -> dict:
-    """Compute strategy weights from backtest results.
-    
-    Weight = max(0, avg_r) * sqrt(min(trades, 30))
-    Strategies with avg_r <= 0 get exploration budget.
-    """
-    if not backtest_data:
-        return DEFAULT_WEIGHTS
-    
+def compute_budget(recent: dict, longterm: dict) -> dict:
+    """Blend recent (1000c) and long-term (4000c), cap at 50% per strat."""
     scores = {}
-    for sname, sdata in backtest_data.items():
-        avg_r = sdata.get("avg_r", 0)
-        trades = sdata.get("trades", 0)
-        if avg_r > 0 and trades >= 2:
-            score = avg_r * math.sqrt(min(trades, 30))
-        else:
-            score = 0.0
-        scores[sname] = max(0.0, score)
+    for strat in ALL_STRATS:
+        recent_avg_r = recent.get(strat, {}).get("avg_r", 0) if recent else 0
+        recent_trades = recent.get(strat, {}).get("trades", 0) if recent else 0
+        long_avg_r = longterm.get(strat, {}).get("avg_r", 0) if longterm else 0
+        long_trades = longterm.get(strat, {}).get("trades", 0) if longterm else 0
+        
+        # Blend: 60% recent, 40% long-term
+        recent_score = max(0, recent_avg_r) * math.sqrt(min(recent_trades, 30))
+        long_score = max(0, long_avg_r) * math.sqrt(min(long_trades, 50))
+        blended = 0.6 * recent_score + 0.4 * long_score
+        scores[strat] = blended
     
     total = sum(scores.values()) or 1.0
     weights = {k: v / total for k, v in scores.items()}
     
-    # Min 5% exploration for each strategy
-    all_strats = set(list(weights.keys()) + list(DEFAULT_WEIGHTS.keys()))
-    for k in all_strats:
-        if k not in weights or weights.get(k, 0) < 0.05:
-            weights[k] = 0.05
+    # Cap at 50%, floor at 5%
+    for s in ALL_STRATS:
+        if s not in weights or weights.get(s, 0) < 0.05:
+            weights[s] = 0.05
+        elif weights[s] > 0.50:
+            weights[s] = 0.50
     
+    # Renormalize
     total2 = sum(weights.values())
     weights = {k: round(v / total2, 4) for k, v in weights.items()}
     
@@ -73,30 +77,22 @@ def compute_budget(backtest_data: dict) -> dict:
 
 
 def main():
-    db_path = DB_PATH
+    run_fresh = "--run-backtest" in sys.argv
     
-    # Check if we should run backtest fresh
-    use_cached = "--run-backtest" not in sys.argv
-    backtest_data = None
+    recent = run_backtest(1000)
+    longterm = run_backtest(4000)
     
-    if use_cached and BACKTEST_RESULT.exists():
-        with open(BACKTEST_RESULT) as f:
-            backtest_data = json.load(f)
-        print(f"  Using cached backtest result from {BACKTEST_RESULT}")
-    else:
-        backtest_data = run_backtest()
-    
-    weights = compute_budget(backtest_data) if backtest_data else DEFAULT_WEIGHTS
+    weights = compute_budget(recent, longterm)
     
     budget = {
         "weights": weights,
-        "source": "backtest" if backtest_data else "default",
+        "source": "blend_1000_4000",
         "timestamp": __import__("time").time(),
     }
     
     # Write to DB
     import sqlite3
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(DB_PATH))
     conn.execute(
         "INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)",
         ("strategy_budget", json.dumps(budget)),
@@ -104,14 +100,21 @@ def main():
     conn.commit()
     conn.close()
     
-    print(f"\nStrategy Budget:")
-    print(f"  Source: {budget['source']}")
+    print(f"\nStrategy Budget (blend 60/40 recent/long-term):")
     for k, v in sorted(weights.items(), key=lambda x: -x[1]):
         print(f"  {k}: {v*100:.1f}%")
-    if backtest_data:
-        for sname, sdata in backtest_data.items():
+    if recent:
+        for sname, sdata in recent.items():
             if sdata.get("trades", 0) > 0:
-                print(f"    ({sname}: {sdata['trades']}t, avg_r {sdata.get('avg_r',0):.3f}, WR {sdata.get('wr',0):.0%})")
+                print(f"    recent-{sname}: {sdata['trades']}t, avg_r {sdata.get('avg_r',0):.3f}")
+    if longterm:
+        for sname, sdata in longterm.items():
+            if sdata.get("trades", 0) > 0:
+                print(f"    long-{sname}: {sdata['trades']}t, avg_r {sdata.get('avg_r',0):.3f}")
+
+
+if __name__ == "__main__":
+    main()
 
 
 if __name__ == "__main__":
