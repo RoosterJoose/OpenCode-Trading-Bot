@@ -125,6 +125,12 @@ AUDITTIMER
 echo "==> 7. Creating data directory..."
 sudo -u "$HERMES_USER" mkdir -p "$INSTALL_DIR/data"
 
+echo "==> 7b. Backfilling historical candle data (this takes ~5 min)..."
+sudo -u "$HERMES_USER" "$INSTALL_DIR/.venv/bin/python3" "$INSTALL_DIR/scripts/backfill_candles.py" 2>&1 | tail -5
+
+echo "==> 7c. Running initial backtest and strategy budget..."
+sudo -u "$HERMES_USER" "$INSTALL_DIR/.venv/bin/python3" "$INSTALL_DIR/scripts/backtest_30d.py" 2>&1
+
 echo "==> 8. Enabling and starting services..."
 sudo systemctl daemon-reload
 sudo systemctl enable hermes-bot
