@@ -24,7 +24,7 @@ class MeanReversion(PerpStrategy):
         rsi_oversold: float = 30.0,
         rsi_period: int = 14,
         atr_period: int = 14,
-        cooldown_bars: int = 30,
+        cooldown_bars: int = 12,
         min_volume_usd: float = 2_000_000,
         tp1_r_mult: float = 0.5,
         tp2_r_mult: float = 1.5,
