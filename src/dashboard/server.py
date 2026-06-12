@@ -214,14 +214,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 gross = sum(float(p.get("entry_price", 0)) * abs(float(p.get("size", 0))) for p in positions)
                 status["gross_exposure"] = gross
                 status["effective_leverage"] = gross / status["equity"] if status["equity"] else 0
+            count_row = conn.execute("SELECT COUNT(*) as cnt FROM trades").fetchone()
+            status["total_trades"] = count_row["cnt"] if count_row else 0
             trades = conn.execute("SELECT pnl_pct, side FROM trades ORDER BY id DESC LIMIT 100").fetchall()
             if trades:
-                status["total_trades"] = len(trades)
                 wins = [t["pnl_pct"] for t in trades if t["pnl_pct"] > 0]
                 losses = [t["pnl_pct"] for t in trades if t["pnl_pct"] < 0]
                 status["win_rate"] = len(wins) / len(trades) if trades else 0
                 if losses and sum(losses) != 0:
                     status["profit_factor"] = abs(sum(wins) / sum(losses))
+                if len(trades) >= 5:
+                    import math
+                    returns = [t["pnl_pct"] for t in trades]
+                    m = sum(returns) / len(returns)
+                    s = math.sqrt(sum((r - m) ** 2 for r in returns) / len(returns))
+                    status["sharpe"] = round((m / s) * math.sqrt(365), 2) if s > 0 else 0.0
         except Exception:
             pass
         finally:
