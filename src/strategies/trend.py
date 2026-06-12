@@ -268,10 +268,18 @@ class TrendFollow(PerpStrategy):
         max_dist = 0.04 * current_price
         stop_dist = max(min_dist, min(max_dist, atr_dist))
 
+        # Chandelier anchor: highest high / lowest low SINCE entry, not last N bars
+        entry_time = position.entry_time
+        since_entry = [c for c in candles[-self.atr_period:] if c.timestamp >= entry_time.timestamp()]
+        if not since_entry:
+            since_entry = [candles[-1]]
+
         if is_short:
-            chandelier = min(c.low for c in candles[-self.atr_period:]) + stop_dist
+            anchor = min(c.low for c in since_entry)
+            chandelier = anchor + stop_dist
         else:
-            chandelier = max(c.high for c in candles[-self.atr_period:]) - stop_dist
+            anchor = max(c.high for c in since_entry)
+            chandelier = anchor - stop_dist
 
         # Switch to PSAR after position has been open > N hours
         age_hours = (datetime.now() - position.entry_time).total_seconds() / 3600
