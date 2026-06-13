@@ -74,6 +74,8 @@ def _coerce(val: str):
         return float(val)
     except ValueError:
         pass
+    if chr(92)+"n" in val:
+        return val.replace(chr(92)+"n", chr(10))
     return val
 
 
