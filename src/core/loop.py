@@ -142,12 +142,16 @@ class TradingLoop:
         kalshi_key_id = self.config.get("kalshi", {}).get("api_key_id", "")
         kalshi_pk = self.config.get("kalshi", {}).get("private_key", "") or os.environ.get("KALSHI_PRIVATE_KEY", "")
         if kalshi_key_id and kalshi_pk:
-            self._kalshi = KalshiAdapter(
-                api_key_id=kalshi_key_id,
-                private_key_pem=kalshi_pk,
-                base_url="https://external-api.kalshi.com",
-            )
-            logger.info("Kalshi: enabled (11 assets)")
+            try:
+                self._kalshi = KalshiAdapter(
+                    api_key_id=kalshi_key_id,
+                    private_key_pem=kalshi_pk,
+                    base_url="https://external-api.kalshi.com",
+                )
+                logger.info("Kalshi: enabled (11 assets)")
+            except Exception as e:
+                logger.warning("Kalshi: failed to initialize (%s), continuing without it", e)
+                self._kalshi = None
         else:
             logger.info("Kalshi: disabled (no API key)")
 
