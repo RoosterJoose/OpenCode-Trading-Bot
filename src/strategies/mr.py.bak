@@ -241,10 +241,8 @@ class MeanReversion(PerpStrategy):
         sl = position.stop_loss or 0
         if sl > 0:
             if is_short and current_price >= sl:
-                self._cooldowns[asset] = self.cooldown_bars
                 return "stop_loss", current_price
             elif not is_short and current_price <= sl:
-                self._cooldowns[asset] = self.cooldown_bars
                 return "stop_loss", current_price
 
         if candles and position.entry_time:
@@ -278,9 +276,6 @@ class MeanReversion(PerpStrategy):
                 return "funding_spike", current_price
 
         return None
-
-    def on_exit(self, asset: str) -> None:
-        self._cooldowns[asset] = self.cooldown_bars
 
     # ── Dynamic RSI thresholds (NotebookLM: per-asset rolling percentiles) ──
 

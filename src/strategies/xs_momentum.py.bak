@@ -181,7 +181,6 @@ class CrossSectionalMomentum(PerpStrategy):
 
         # Stop loss
         if pnl_pct * position.leverage <= -self.stop_loss_pct / 100:
-            self._cooldowns[asset] = self.cooldown_cycles
             return "xs_stop_loss", current_price
 
         return None
