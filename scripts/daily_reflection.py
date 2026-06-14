@@ -12,40 +12,90 @@ Results written to SQLite state keys:
 
 import json
 import math
+import os
 import sqlite3
 import sys
 import time
-import urllib.request
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
+
+import httpx
 
 # ── Tracked assets (must match Hermes config) ──────────────────────
 
 ASSETS = [
     "BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT",
-    "LTC", "NEAR", "ATOM", "UNI", "ARB", "OP", "APT", "SUI", "AAVE", "INJ",
+    "LTC", "NEAR", "SUI", "AAVE",
 ]
 
-# ── Hyperliquid API helper ──────────────────────────────────────────
+ASSET_TO_CDE = {
+    "BTC": "BIP-20DEC30-CDE", "ETH": "ETP-20DEC30-CDE", "SOL": "SLP-20DEC30-CDE",
+    "XRP": "XPP-20DEC30-CDE", "DOGE": "DOP-20DEC30-CDE", "ADA": "ADP-20DEC30-CDE",
+    "AVAX": "AVP-20DEC30-CDE", "LINK": "LNP-20DEC30-CDE", "DOT": "POP-20DEC30-CDE",
+    "AAVE": "AVE-20DEC30-CDE", "LTC": "LCP-20DEC30-CDE", "NEAR": "NER-20DEC30-CDE",
+    "SUI": "SUP-20DEC30-CDE", "BNB": "BNB-20DEC30-CDE",
+}
 
-HL_URL = "https://api.hyperliquid.xyz/info"
 
+def fetch_candles(asset: str, hours: int = 24) -> list[dict]:
+    """Fetch candles from Coinbase CDE API."""
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.backends import default_backend
 
-def fetch_candles(coin: str, hours: int = 24) -> list[dict]:
-    now_ms = int(time.time() * 1000)
-    interval_ms = 3_600_000
-    start_ms = now_ms - (hours * interval_ms)
-    body = {
-        "type": "candleSnapshot",
-        "req": {"coin": coin, "interval": "1h", "startTime": start_ms, "endTime": now_ms},
-    }
-    req = urllib.request.Request(HL_URL, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
-    data = json.loads(urllib.request.urlopen(req, timeout=15).read())
-    return [{
-        "ts": c["t"], "open": float(c["o"]), "high": float(c["h"]),
-        "low": float(c["l"]), "close": float(c["c"]), "volume": float(c["v"]),
-    } for c in data] if isinstance(data, list) else []
+    api_key_id = os.environ.get("HERMES_COINBASE__API_KEY_ID", "")
+    private_key = os.environ.get("HERMES_COINBASE__PRIVATE_KEY", "")
+    if not api_key_id or not private_key:
+        return []
+
+    product = ASSET_TO_CDE.get(asset)
+    if not product:
+        return []
+
+    # Handle PEM newlines: env file has \\n (literal backslash-n) when read directly
+    # or \n when loaded via systemd EnvironmentFile=
+    pk = private_key.replace("\\\\n", "\n").replace("\\n", "\n")
+    key = serialization.load_pem_private_key(pk.encode(), password=None, backend=default_backend())
+
+    pid = product
+    path = f"/products/{pid}/candles"
+    full_path = f"/api/v3/brokerage{path}"
+    uri = f"GET api.coinbase.com{full_path}"
+    token = pyjwt.encode({
+        "iss": "cdp", "sub": api_key_id,
+        "nbf": int(time.time()), "exp": int(time.time()) + 120,
+        "uri": uri,
+    }, key, algorithm="ES256", headers={
+        "kid": api_key_id,
+        "nonce": os.urandom(16).hex(),
+    })
+
+    try:
+        resp = httpx.get(
+            f"https://api.coinbase.com{full_path}",
+            params={"granularity": "ONE_HOUR", "limit": max(hours, 24)},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        candles = data.get("candles", [])
+        result = []
+        for c in candles:
+            result.append({
+                "ts": c["start"],
+                "open": float(c["open"]),
+                "high": float(c["high"]),
+                "low": float(c["low"]),
+                "close": float(c["close"]),
+                "volume": float(c["volume"]),
+            })
+        result.sort(key=lambda x: x["ts"])
+        return result
+    except Exception:
+        return []
 
 
 # ── Technical indicators ─────────────────────────────────────────────
@@ -327,7 +377,7 @@ def main(db_path: str):
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "total_assets": len(results),
         "significant_moves": total_significant,
-        "missed_moves": total_missed,
+        "missed_moves": missed_moves,
         "potentially_catchable": total_entered,
         "bias": bias,
         "learning": learning,

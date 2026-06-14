@@ -429,12 +429,6 @@ class TradingLoop:
             }
             for p in exchange.positions.values()
         ])
-        # Periodic WAL checkpoint every 5 cycles to prevent WAL bloat
-        if self._cycle_count % 5 == 0:
-            try:
-                self.store._conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-            except Exception:
-                pass
 
     async def _process_asset(
         self,

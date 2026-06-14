@@ -45,22 +45,22 @@ def main(db_path: str):
     # This is the "institutional knowledge" of which parameter to relax when.
     adjustment_map = {
         ("strategy_limitation", "no_bull_cross"): {
-            "param": None,
-            "widen_step": 0,
-            "max_widen": 0,
-            "reason": "lagging_indicator — trend-following requires EMA cross, cannot capture move starts",
+            "param": "near_ema_pct",
+            "current_default": 0.04,
+            "widen_step": 0.02,   # Add 2% per repeat
+            "max_widen": 0.10,    # Cap at 10% to prevent garbage
         },
         ("strategy_limitation", "no_bear_cross"): {
-            "param": None,
-            "widen_step": 0,
-            "max_widen": 0,
-            "reason": "lagging_indicator — trend-following requires EMA cross, cannot capture move starts",
+            "param": "near_ema_pct",
+            "current_default": 0.04,
+            "widen_step": 0.02,
+            "max_widen": 0.10,
         },
         ("strategy_limitation", "multiple_gates"): {
             "param": "volume_min_usd",
             "current_default": 2_000_000,
-            "widen_step": -500_000,  # Lower volume gate more conservatively
-            "max_widen": 500_000,
+            "widen_step": -1_000_000,  # Lower the volume gate
+            "max_widen": 500_000,       # Cap at $500k minimum
         },
         ("strategy_limitation", "overbought_rsi_72"): {
             "param": "rsi_overbought",
@@ -91,10 +91,6 @@ def main(db_path: str):
         rule = adjustment_map[key]
         cnt = row["cnt"]
         asset = row["asset"]
-
-        # Skip entries that represent fundamental strategy limitations (no parameter to adjust)
-        if rule.get("param") is None:
-            continue
 
         # Compute adjusted value: 1 widen_step per repeat beyond 2 (so 3rd day triggers 1 widen)
         widen_steps = min(cnt - 2, 6)  # max 6 widen steps = 6 days

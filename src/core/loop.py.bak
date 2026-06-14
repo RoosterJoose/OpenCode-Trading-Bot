@@ -142,16 +142,12 @@ class TradingLoop:
         kalshi_key_id = self.config.get("kalshi", {}).get("api_key_id", "")
         kalshi_pk = self.config.get("kalshi", {}).get("private_key", "") or os.environ.get("KALSHI_PRIVATE_KEY", "")
         if kalshi_key_id and kalshi_pk:
-            try:
-                self._kalshi = KalshiAdapter(
-                    api_key_id=kalshi_key_id,
-                    private_key_pem=kalshi_pk,
-                    base_url="https://external-api.kalshi.com",
-                )
-                logger.info("Kalshi: enabled (11 assets)")
-            except Exception as e:
-                logger.warning("Kalshi: failed to initialize (%s), continuing without it", e)
-                self._kalshi = None
+            self._kalshi = KalshiAdapter(
+                api_key_id=kalshi_key_id,
+                private_key_pem=kalshi_pk,
+                base_url="https://external-api.kalshi.com",
+            )
+            logger.info("Kalshi: enabled (11 assets)")
         else:
             logger.info("Kalshi: disabled (no API key)")
 
@@ -429,12 +425,6 @@ class TradingLoop:
             }
             for p in exchange.positions.values()
         ])
-        # Periodic WAL checkpoint every 5 cycles to prevent WAL bloat
-        if self._cycle_count % 5 == 0:
-            try:
-                self.store._conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-            except Exception:
-                pass
 
     async def _process_asset(
         self,
