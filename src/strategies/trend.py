@@ -175,6 +175,14 @@ class TrendFollow(PerpStrategy):
             confidence = min(confidence * 1.2, 0.95)
             sources.append("altfins_validated")
 
+        # Kalshi OI surge confirmation
+        oi_surge = any(s.asset == asset and s.source == "kalshi:oi_surge" for s in signals)
+        if oi_surge:
+            confidence = min(confidence * 1.05, 1.0)
+            sources.append("kalshi_oi_surge")
+            component_sources.append("kalshi:oi_surge")
+
+
         # Funding rate boost
         if is_long and funding_rate < -0.0005:
             confidence += 0.15

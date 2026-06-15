@@ -509,6 +509,17 @@ class TradingLoop:
         for strat in self.strategies:
             sig_bucket = f"{strat.name()}:{asset}"
             all_signals = altfins_sigs + self.signal_cache.get("all", [])
+            # Kalshi OI surge as breakout confirmation signal
+            if self._kalshi and oi_vel > 15:
+                oi_signal = Signal(
+                    source="kalshi:oi_surge",
+                    asset=asset,
+                    direction=Side.LONG,
+                    confidence=min(abs(oi_vel) / 100, 1.0),
+                    timestamp=datetime.now(timezone.utc),
+                    bucket="breakout_confirmation",
+                )
+                all_signals.append(oi_signal)
             result = strat.should_enter(asset, candles, all_signals, regime, pos, funding_rate)
             if result is None:
                 continue

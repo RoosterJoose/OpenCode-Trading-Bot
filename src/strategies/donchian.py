@@ -124,6 +124,12 @@ class DonchianBreakout(PerpStrategy):
                 return None
 
         # Debug: log when entry conditions met
+        # Kalshi OI surge confirmation
+        oi_surge = any(s.asset == asset and s.source == "kalshi:oi_surge" for s in signals)
+        if oi_surge:
+            confidence += 0.05
+            sources.append("kalshi_oi_surge")
+
         logger.info("DONCHIAN %s: side=%s drift=%s regime=%s",
                     asset, "LONG" if is_long else "SHORT", drift, regime.value)
 
