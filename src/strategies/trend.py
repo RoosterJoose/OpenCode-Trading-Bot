@@ -282,7 +282,7 @@ class TrendFollow(PerpStrategy):
             chandelier = anchor - stop_dist
 
         # Switch to PSAR after position has been open > N hours
-        age_hours = (datetime.now() - position.entry_time).total_seconds() / 3600
+        age_hours = (datetime.now(timezone.utc) - position.entry_time).total_seconds() / 3600
         if age_hours > self.psar_switch_hours:
             psar = self._psar(candles)
             if psar is not None:
