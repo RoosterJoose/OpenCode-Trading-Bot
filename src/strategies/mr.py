@@ -26,7 +26,7 @@ class MeanReversion(PerpStrategy):
         atr_period: int = 14,
         cooldown_bars: int = 12,
         min_volume_usd: float = 2_000_000,
-        tp1_r_mult: float = 0.5,
+        tp1_r_mult: float = 1.0,
         tp2_r_mult: float = 1.5,
         tp3_r_mult: float = 3.0,
         max_hold_hours: float = 48.0,
@@ -264,9 +264,9 @@ class MeanReversion(PerpStrategy):
         else:
             r_mult = (current_price - entry) / max(stop_dist, 0.001)
 
-        if r_mult >= self.tp3_r_mult:
+        if r_mult >= self.tp1_r_mult:
             self._cooldowns[asset] = self.cooldown_bars
-            return "tp3", current_price
+            return "tp1", current_price
 
         if funding_rate > self.funding_halt_threshold:
             if not is_short:
