@@ -251,6 +251,40 @@ class TrendFollow(PerpStrategy):
         funding_rate: float,
     ) -> Optional[tuple[str, Optional[float]]]:
         is_short = position.side == Side.SHORT
+
+        # Chandelier is the primary stop for trend strategy (volatility-adjusted)
+        atr = self._atr(candles)
+        if atr > 0:
+            chandelier_mult = (
+                self.atr_chandelier_mult_short_major if asset in self.majors else self.atr_chandelier_mult_short_alt
+            ) if is_short else (
+                self.atr_chandelier_mult_long_major if asset in self.majors else self.atr_chandelier_mult_long_alt
+            )
+            atr_dist = atr * chandelier_mult
+            min_dist = 0.015 * current_price
+            max_dist = 0.04 * current_price
+            stop_dist = max(min_dist, min(max_dist, atr_dist))
+
+            # Chandelier anchor: highest high / lowest low SINCE entry
+            entry_time = position.entry_time
+            since_entry = [c for c in candles[-self.atr_period:] if c.timestamp >= entry_time.timestamp()]
+            if not since_entry:
+                since_entry = [candles[-1]]
+
+            if is_short:
+                anchor = min(c.low for c in since_entry)
+                chandelier = anchor + stop_dist
+                if current_price >= chandelier:
+                    self._cooldowns[asset] = self.cooldown_cycles
+                    return "chandelier", current_price
+            else:
+                anchor = max(c.high for c in since_entry)
+                chandelier = anchor - stop_dist
+                if current_price <= chandelier:
+                    self._cooldowns[asset] = self.cooldown_cycles
+                    return "chandelier", current_price
+
+        # Fallback if chandelier couldn't compute: use static stop
         sl = position.stop_loss or 0
         if sl > 0:
             if is_short:
@@ -262,32 +296,8 @@ class TrendFollow(PerpStrategy):
                     self._cooldowns[asset] = self.cooldown_cycles
                     return "stop_loss", current_price
 
-        atr = self._atr(candles)
         if atr <= 0:
             return None
-
-        chandelier_mult = (
-            self.atr_chandelier_mult_short_major if asset in self.majors else self.atr_chandelier_mult_short_alt
-        ) if is_short else (
-            self.atr_chandelier_mult_long_major if asset in self.majors else self.atr_chandelier_mult_long_alt
-        )
-        atr_dist = atr * chandelier_mult
-        min_dist = 0.015 * current_price
-        max_dist = 0.04 * current_price
-        stop_dist = max(min_dist, min(max_dist, atr_dist))
-
-        # Chandelier anchor: highest high / lowest low SINCE entry
-        entry_time = position.entry_time
-        since_entry = [c for c in candles[-self.atr_period:] if c.timestamp >= entry_time.timestamp()]
-        if not since_entry:
-            since_entry = [candles[-1]]
-
-        if is_short:
-            anchor = min(c.low for c in since_entry)
-            chandelier = anchor + stop_dist
-        else:
-            anchor = max(c.high for c in since_entry)
-            chandelier = anchor - stop_dist
 
         # Switch to PSAR after position has been open > N hours
         age_hours = (datetime.now(timezone.utc) - position.entry_time).total_seconds() / 3600
@@ -298,15 +308,6 @@ class TrendFollow(PerpStrategy):
                     return "psar", current_price
                 elif not is_short and current_price <= psar:
                     return "psar", current_price
-
-        if is_short:
-            if current_price >= chandelier:
-                self._cooldowns[asset] = self.cooldown_cycles
-                return "chandelier", current_price
-        else:
-            if current_price <= chandelier:
-                self._cooldowns[asset] = self.cooldown_cycles
-                return "chandelier", current_price
 
         # EMA trend-reversal exit (only for exit, not entry)
         fast = self._ema(candles, _FAST_EXIT_PERIOD)
