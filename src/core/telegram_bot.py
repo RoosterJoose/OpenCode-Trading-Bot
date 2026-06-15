@@ -80,18 +80,22 @@ class TelegramBot:
         cmd = text.lower().split()[0]
         logger.info("TelegramBot: command %s from %s", cmd, chat_id)
 
-        if cmd == "/status":
-            await self._cmd_status()
-        elif cmd in ("/positions", "/pos"):
-            await self._cmd_positions()
-        elif cmd == "/pause":
-            await self._cmd_pause()
-        elif cmd == "/resume":
-            await self._cmd_resume()
-        elif cmd == "/help":
-            await self._cmd_help()
-        else:
-            await self._send("Unknown command. Try /help")
+        try:
+            if cmd == "/status":
+                await self._cmd_status()
+            elif cmd in ("/positions", "/pos"):
+                await self._cmd_positions()
+            elif cmd == "/pause":
+                await self._cmd_pause()
+            elif cmd == "/resume":
+                await self._cmd_resume()
+            elif cmd == "/help":
+                await self._cmd_help()
+            else:
+                await self._send("Unknown command. Try /help")
+        except Exception as e:
+            logger.exception("TelegramBot: error handling %s: %s", cmd, e)
+            await self._send(f"Error: {type(e).__name__}: {str(e)[:100]}")
 
     async def _cmd_status(self):
         eq = self.store.get_state("paper_equity") or "?"
@@ -109,7 +113,7 @@ class TelegramBot:
 
         msg = f"Equity: ${eq}{dd_str}\nPeak: ${peak}\nOpen positions: {n_pos}"
 
-        snapshots = self.store.get_equity_snapshots(limit=2)
+        snapshots = self.store.recent_equity(limit=2)
         if len(snapshots) >= 2:
             try:
                 pnl_pct = (eq_f - snapshots[-1]["equity"]) / snapshots[-1]["equity"] * 100
