@@ -29,7 +29,7 @@ from src.adapters.base import ExchangeAdapter
 from src.adapters.coinbase_advanced import CoinbaseAdvancedAdapter
 from src.adapters.kalshi import KalshiAdapter
 from src.adapters.paper_perp import PaperPerpExchange
-from src.core.notifications import NotificationService
+from src.core.telegram_bot import TelegramBot
 from src.core.intents import TradeIntent
 from src.core.perp_risk import PerpRiskManager
 from src.core.reflect import SignalTracker, WeeklyReflector
@@ -101,7 +101,10 @@ class TradingLoop:
         self._kalshi = None
         self._kalshi_funding = {}
         self._strategy_budget = {}
-        self.notifier = NotificationService()
+        token = self.config.get("telegram", {}).get("bot_token") or os.environ.get("HERMES_TELEGRAM_BOT_TOKEN", "")
+        chat_id = self.config.get("telegram", {}).get("chat_id") or os.environ.get("HERMES_TELEGRAM_CHAT_ID", "")
+        self.telegram = TelegramBot(token, chat_id, self.store)
+        self.notifier = self.telegram
 
     def _restore_paper_positions(self, exchange: PaperPerpExchange):
         positions = self.store.get_state("positions") or []
@@ -118,6 +121,7 @@ class TradingLoop:
         exchange = PaperPerpExchange(initial_balance=initial)
         self._restore_paper_positions(exchange)
         asyncio.ensure_future(self.notifier.bot_started(initial))
+        asyncio.ensure_future(self.telegram.start_polling())
         saved_peak = self.store.get_state("paper_peak_equity")
         if saved_peak:
             self.risk.peak_equity = max(float(saved_peak), initial)
@@ -230,7 +234,10 @@ class TradingLoop:
             logger.debug("dynamic thresholds: %s", e)
         # Load strategy budget from strategy_budget.py
         self._strategy_budget = {}
-        self.notifier = NotificationService()
+        token = self.config.get("telegram", {}).get("bot_token") or os.environ.get("HERMES_TELEGRAM_BOT_TOKEN", "")
+        chat_id = self.config.get("telegram", {}).get("chat_id") or os.environ.get("HERMES_TELEGRAM_CHAT_ID", "")
+        self.telegram = TelegramBot(token, chat_id, self.store)
+        self.notifier = self.telegram
         try:
             raw = self.store.get_state("strategy_budget")
             if raw:
