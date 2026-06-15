@@ -29,6 +29,7 @@ from src.adapters.base import ExchangeAdapter
 from src.adapters.coinbase_advanced import CoinbaseAdvancedAdapter
 from src.adapters.kalshi import KalshiAdapter
 from src.adapters.paper_perp import PaperPerpExchange
+from src.core.notifications import NotificationService
 from src.core.intents import TradeIntent
 from src.core.perp_risk import PerpRiskManager
 from src.core.reflect import SignalTracker, WeeklyReflector
@@ -100,6 +101,7 @@ class TradingLoop:
         self._kalshi = None
         self._kalshi_funding = {}
         self._strategy_budget = {}
+        self.notifier = NotificationService()
 
     def _restore_paper_positions(self, exchange: PaperPerpExchange):
         positions = self.store.get_state("positions") or []
@@ -115,6 +117,7 @@ class TradingLoop:
         initial = float(saved_eq) if saved_eq else self.config.get("exchange", {}).get("initial_balance", 10_000.0)
         exchange = PaperPerpExchange(initial_balance=initial)
         self._restore_paper_positions(exchange)
+        asyncio.ensure_future(self.notifier.bot_started(initial))
         saved_peak = self.store.get_state("paper_peak_equity")
         if saved_peak:
             self.risk.peak_equity = max(float(saved_peak), initial)
@@ -227,6 +230,7 @@ class TradingLoop:
             logger.debug("dynamic thresholds: %s", e)
         # Load strategy budget from strategy_budget.py
         self._strategy_budget = {}
+        self.notifier = NotificationService()
         try:
             raw = self.store.get_state("strategy_budget")
             if raw:
@@ -409,6 +413,8 @@ class TradingLoop:
         self.store.save_equity_snapshot(eq, self.risk.peak_equity)
         self.store.put_state("paper_equity", str(eq))
         self.store.put_state("paper_peak_equity", str(self.risk.peak_equity))
+        await self.notifier.daily_drawdown(eq, self.risk.peak_equity,
+            (self.risk.peak_equity - eq) / self.risk.peak_equity * 100 if self.risk.peak_equity > 0 else 0)
         self.store.put_state("positions", [
             {
                 "asset": p.asset,
@@ -613,6 +619,9 @@ class TradingLoop:
                     pos.stop_loss = stop_price
                     pos.component_sources = list(meta.get("component_sources", []))
                 self.risk.record_position_open(asset)
+                asyncio.ensure_future(self.notifier.position_opened(
+                    asset, side.value.upper(), entry_price, qty, lev, confidence, strat.name(),
+                ))
                 logger.info(
                     "PAPER %s %s qty=%.4f @ %.2f stop=%.2f lev=%.1fx risk=$%.0f conf=%.2f altfins=%d",
                     side.value.upper(), asset, qty, entry_price, stop_price, lev,
@@ -897,6 +906,10 @@ class TradingLoop:
             "r_multiple": round(r_mult, 3),
         }
         self.store.save_trade(trade)
+
+        asyncio.ensure_future(self.notifier.position_closed(
+            asset, pos.side.value.upper(), pos.entry_price, price, pnl_dollars, reason, pos.strategy or "",
+        ))
 
         logger.info(
             "EXIT %s %s price=%.2f pnl=%.1f%% r=%.2f reason=%s",
