@@ -120,7 +120,7 @@ class TradingLoop:
         initial = float(saved_eq) if saved_eq else self.config.get("exchange", {}).get("initial_balance", 10_000.0)
         exchange = PaperPerpExchange(initial_balance=initial)
         self._restore_paper_positions(exchange)
-        asyncio.ensure_future(self.notifier.bot_started(initial))
+        asyncio.ensure_future(self.notifier.bot_started(exchange.equity))
         asyncio.ensure_future(self.telegram.start_polling())
         saved_peak = self.store.get_state("paper_peak_equity")
         if saved_peak:
