@@ -152,7 +152,7 @@ class RegressionTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("confidence_below_gate", reason)
 
-        bad_stop = self._intent_row(stop=99.5)
+        bad_stop = self._intent_row(stop=99.9)
         ok, reason = asyncio.run(run(bad_stop))
         self.assertFalse(ok)
         self.assertIn("stop_distance_out_of_bounds", reason)
