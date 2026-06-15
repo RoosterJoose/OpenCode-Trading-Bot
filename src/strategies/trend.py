@@ -1,9 +1,11 @@
 """
-Trend-following strategy for perps — EMA crossover + ADX with perp-aware exits.
+Trend-following strategy using Donchian 20-bar breakout for entry.
+Replaced EMA9/21 crossover (was structurally too slow per NotebookLM round 10).
 
-Only enters in trending regimes. Uses chandelier exit with ATR,
-switching to Parabolic SAR for exits after 48h to lock in profits.
-Cooldown between trend entries to avoid whipsaw.
+Entry: price breaks above 20-bar high (long) or below 20-bar low (short)
+Exit:  Chandelier ATR trail, PSAR after 48h, EMA death/golden cross, funding drag
+Regime gate: only enters in TRENDING / STRONGLY_TRENDING regimes
+Cooldown: 30 cycles between trend entries
 """
 
 from typing import Optional
@@ -15,14 +17,15 @@ from src.strategies.base import PerpStrategy
 
 logger = logging.getLogger(__name__)
 
+# EMA cross exit uses fixed 9/21 (only for trend-reversal detection, not entry)
+_FAST_EXIT_PERIOD = 9
+_SLOW_EXIT_PERIOD = 21
+
 
 class TrendFollow(PerpStrategy):
     def __init__(
         self,
-        fast_period: int = 9,
-        slow_period: int = 21,
-        adx_period: int = 14,
-        adx_threshold: float = 25.0,
+        breakout_period: int = 20,
         atr_period: int = 22,
         atr_chandelier_mult_long_major: float = 3.0,
         atr_chandelier_mult_long_alt: float = 4.0,
@@ -37,10 +40,7 @@ class TrendFollow(PerpStrategy):
         majors: set | None = None,
         signal_tracker=None,
     ):
-        self.fast_period = fast_period
-        self.slow_period = slow_period
-        self.adx_period = adx_period
-        self.adx_threshold = adx_threshold
+        self.breakout_period = breakout_period
         self.atr_period = atr_period
         self.atr_chandelier_mult_long_major = atr_chandelier_mult_long_major
         self.atr_chandelier_mult_long_alt = atr_chandelier_mult_long_alt
@@ -73,9 +73,10 @@ class TrendFollow(PerpStrategy):
             return None
         if position is not None:
             return None
-        if len(candles) < self.slow_period + self.adx_period + 5:
+        if len(candles) < self.breakout_period + self.atr_period + 5:
             return None
 
+        # Regime gate: only enter in trending regimes
         if regime not in (RegimeType.TRENDING, RegimeType.STRONGLY_TRENDING):
             logger.info("TREND %s: regime=%s", asset, regime.value)
             return None
@@ -92,65 +93,64 @@ class TrendFollow(PerpStrategy):
             if avg_vol * avg_pr < self.min_oi_usd * 0.5:
                 return None
 
-        ema_fast = self._ema(candles, self.fast_period)
-        ema_slow = self._ema(candles, self.slow_period)
-        if ema_fast is None or ema_slow is None:
+        # Donchian channel: highest high / lowest low over breakout_period (excluding last bar)
+        recent = candles[-(self.breakout_period + 1) : -1]
+        if len(recent) < self.breakout_period:
+            return None
+        upper = max(c.high for c in recent)
+        lower = min(c.low for c in recent)
+
+        is_long_breakout = last.close > upper
+        is_short_breakout = last.close < lower
+        if not (is_long_breakout or is_short_breakout):
             return None
 
-        prev_fast = self._ema(candles[:-1], self.fast_period)
-        prev_slow = self._ema(candles[:-1], self.slow_period)
-        if prev_fast is None or prev_slow is None:
-            return None
-
-        cross_above = prev_fast <= prev_slow and ema_fast > ema_slow
-        cross_below = prev_fast >= prev_slow and ema_fast < ema_slow
-        continuation_long = ema_fast > ema_slow and last.close > ema_fast
-        continuation_short = ema_fast < ema_slow and last.close < ema_fast
-        near_ema_pct = self._get_threshold(asset, "near_ema_pct", 0.04)
-        near_ema = abs(last.close - ema_fast) / ema_fast <= near_ema_pct if ema_fast else False
-        if not cross_above and not (continuation_long and near_ema):
-            if not cross_below and not (continuation_short and near_ema):
-                return None
-
-        # Asset-specific drift regime (NotebookLM: >60% directional days)
+        # Asset-specific drift regime
         drift = self._asset_drift(candles)
-        is_long_signal = cross_above or (continuation_long and near_ema)
-        if drift == "bullish_drift" and not is_long_signal:
+        is_long = is_long_breakout
+        if drift == "bullish_drift" and not is_long:
             return None
-        if drift == "bearish_drift" and is_long_signal:
+        if drift == "bearish_drift" and is_long:
             return None
 
         # Price-vs-EMA50 divergence: if price diverges >3% from EMA50, only trade that direction
         ema50 = self._ema(candles, 50)
         if ema50 is not None and ema50 > 0:
             divergence = (last.close - ema50) / ema50
-            if divergence > 0.03 and not is_long_signal:
+            if divergence > 0.03 and not is_long:
                 return None
-            if divergence < -0.03 and is_long_signal:
+            if divergence < -0.03 and is_long:
                 return None
-
-        adx = self._adx(candles)
-        adx_ok = adx is not None and adx >= self.adx_threshold
-        hurst_override = regime == RegimeType.STRONGLY_TRENDING and (adx is None or adx < self.adx_threshold)
-        if not adx_ok and not hurst_override:
-            return None
 
         atr = self._atr(candles)
         entry_price = last.close
 
-        is_long = cross_above or (continuation_long and near_ema)
-        cross_type = "bull" if is_long else "bear"
-        confidence = 0.5
-        sources = [f"ema_{cross_type}_cross" if (cross_above if is_long else cross_below) else f"{cross_type}_continuation"]
-        if adx_ok:
-            sources.append("adx_confirmed")
-        if hurst_override:
-            sources.append("hurst_override")
-        if regime == RegimeType.STRONGLY_TRENDING:
-            confidence += 0.2
-            sources.append("strong_trend")
+        # Breakout strength
+        if is_long:
+            breakout_pct = (last.close - upper) / upper
+        else:
+            breakout_pct = (lower - last.close) / lower
 
-        component_sources = [f"local:ema_{cross_type}_cross" if (cross_above if is_long else cross_below) else f"local:{cross_type}_continuation", "local:adx_confirmed"]
+        # Confidence scoring
+        confidence = 0.55
+        sources = ["donchian_breakout", f"breakout_{breakout_pct:.3f}"]
+        component_sources = ["local:donchian_breakout"]
+
+        if breakout_pct > 0.005:
+            confidence += 0.05
+        if breakout_pct > 0.015:
+            confidence += 0.05
+        if regime == RegimeType.STRONGLY_TRENDING:
+            confidence += 0.10
+            sources.append("strong_trend")
+            component_sources.append("local:strong_trend")
+
+        # ADX as informational confirmation (not a gate)
+        adx_val = self._adx(candles)
+        if adx_val is not None and adx_val >= 25:
+            sources.append(f"adx_{adx_val:.0f}")
+            component_sources.append("local:adx_confirmed")
+            confidence += 0.05
 
         # Altfins signal validation
         altfins_confirm = False
@@ -175,6 +175,7 @@ class TrendFollow(PerpStrategy):
             confidence = min(confidence * 1.2, 0.95)
             sources.append("altfins_validated")
 
+        # Funding rate boost
         if is_long and funding_rate < -0.0005:
             confidence += 0.15
             sources.append("funding_tailwind")
@@ -189,31 +190,30 @@ class TrendFollow(PerpStrategy):
             sources.append("funding_neg_short_boost" if not is_long else "funding_discount_long")
 
         confidence = min(confidence, 1.0)
-
         side = Side.LONG if is_long else Side.SHORT
 
         return side, confidence, {
             "entry_price": entry_price,
-            "fast_ema": round(ema_fast, 2),
-            "slow_ema": round(ema_slow, 2),
-            "adx": round(adx, 2) if adx is not None else None,
+            "donchian_upper": round(upper, 2),
+            "donchian_lower": round(lower, 2),
+            "breakout_pct": round(breakout_pct * 100, 3),
             "atr": round(atr, 4),
             "side": side.value,
             "sources": sources,
             "component_sources": component_sources,
         }
 
-    # ── Asset-specific drift regime (NotebookLM: >60% directional days) ──
+    # ── Asset-specific drift regime ──
 
     @staticmethod
     def _asset_drift(candles: list[PerpCandle]) -> str:
         if len(candles) < 50:
             return "neutral"
-        closes = [c.close for c in candles[-48:]]  # 2 days of 1h data
+        closes = [c.close for c in candles[-48:]]
         if len(closes) < 48:
             return "neutral"
 
-        # Deep oversold override: if RSI on multi-day window is < 22, allow contrarian entries
+        # Deep oversold override
         long_closes = [c.close for c in candles[-48:]]
         if len(long_closes) >= 15:
             gains = losses = 0.0
@@ -268,7 +268,7 @@ class TrendFollow(PerpStrategy):
         max_dist = 0.04 * current_price
         stop_dist = max(min_dist, min(max_dist, atr_dist))
 
-        # Chandelier anchor: highest high / lowest low SINCE entry, not last N bars
+        # Chandelier anchor: highest high / lowest low SINCE entry
         entry_time = position.entry_time
         since_entry = [c for c in candles[-self.atr_period:] if c.timestamp >= entry_time.timestamp()]
         if not since_entry:
@@ -300,8 +300,9 @@ class TrendFollow(PerpStrategy):
                 self._cooldowns[asset] = self.cooldown_cycles
                 return "chandelier", current_price
 
-        fast = self._ema(candles, self.fast_period)
-        slow = self._ema(candles, self.slow_period)
+        # EMA trend-reversal exit (only for exit, not entry)
+        fast = self._ema(candles, _FAST_EXIT_PERIOD)
+        slow = self._ema(candles, _SLOW_EXIT_PERIOD)
         if fast is not None and slow is not None:
             if is_short:
                 if fast > slow:
@@ -310,6 +311,7 @@ class TrendFollow(PerpStrategy):
                 if fast < slow:
                     return "ema_death_cross", current_price
 
+        # Funding drag exit
         if funding_rate > 0.003:
             if not is_short:
                 return "funding_drag", current_price
@@ -339,10 +341,10 @@ class TrendFollow(PerpStrategy):
         return sum(trs) / len(trs) if trs else 0.0
 
     def _adx(self, candles: list[PerpCandle]) -> Optional[float]:
-        if len(candles) < self.adx_period * 2 + 5:
+        if len(candles) < 33:
             return None
         tr_vals, plus_dm, minus_dm = [], [], []
-        for i in range(-self.adx_period * 2 + 1, 0):
+        for i in range(-28, 0):
             h, l, ph, pl = candles[i].high, candles[i].low, candles[i - 1].high, candles[i - 1].low
             tr_vals.append(max(h - l, abs(h - pl), abs(l - ph)))
             up = h - ph
@@ -351,11 +353,11 @@ class TrendFollow(PerpStrategy):
             minus_dm.append(max(down, 0) if down > up else 0)
         if not tr_vals:
             return None
-        atr_p = sum(tr_vals[-self.adx_period:]) / self.adx_period
+        atr_p = sum(tr_vals[-14:]) / 14
         if atr_p <= 0:
             return None
-        pdi = (sum(plus_dm[-self.adx_period:]) / self.adx_period) / atr_p * 100
-        ndi = (sum(minus_dm[-self.adx_period:]) / self.adx_period) / atr_p * 100
+        pdi = (sum(plus_dm[-14:]) / 14) / atr_p * 100
+        ndi = (sum(minus_dm[-14:]) / 14) / atr_p * 100
         dx = abs(pdi - ndi) / (pdi + ndi) * 100 if (pdi + ndi) > 0 else 0
         return dx
 
