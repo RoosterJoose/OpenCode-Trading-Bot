@@ -418,7 +418,7 @@ class TradingLoop:
         self.risk.update_equity(eq, ge)
         self.risk.set_gross_exposure(ge)
         self.store.save_equity_snapshot(eq, self.risk.peak_equity)
-        self.store.put_state("paper_equity", str(eq))
+        self.store.put_state("paper_equity", str(exchange.balance))
         self.store.put_state("paper_peak_equity", str(self.risk.peak_equity))
         await self.notifier.daily_drawdown(eq, self.risk.peak_equity,
             (self.risk.peak_equity - eq) / self.risk.peak_equity * 100 if self.risk.peak_equity > 0 else 0)
