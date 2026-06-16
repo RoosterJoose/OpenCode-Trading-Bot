@@ -204,6 +204,14 @@ class TelegramBot:
                 f"(${peak_equity:.0f} \u2192 ${current_equity:.0f})"
             )
 
+    def _rate_limit(self, key: str, min_interval: float) -> bool:
+        now = time.time()
+        last = self._last_sent.get(key, 0.0)
+        if now - last < min_interval:
+            return False
+        self._last_sent[key] = now
+        return True
+
     async def _send(self, text: str):
         if not self.enabled:
             return
