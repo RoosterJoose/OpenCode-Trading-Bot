@@ -625,6 +625,8 @@ class TradingLoop:
                     pos.entry_confidence = confidence
                     pos.stop_loss = stop_price
                     pos.component_sources = list(meta.get("component_sources", []))
+                    pos.regime = regime.value if hasattr(regime, "value") else str(regime)
+                    pos.entry_regime = pos.regime
                 self.risk.record_position_open(asset)
                 asyncio.ensure_future(self.notifier.position_opened(
                     asset, side.value.upper(), entry_price, qty, lev, confidence, strat.name(),
@@ -910,6 +912,8 @@ class TradingLoop:
                 "entry_time": pos.entry_time.isoformat(),
                 "exit_time": datetime.now(timezone.utc).isoformat(),
                 "r_multiple": round(r_mult, 3),
+                "regime": pos.regime or "",
+                "entry_regime": pos.entry_regime or pos.regime or "",
             }
             self.store.save_trade(trade)
             # Reduce position size; move stop to breakeven

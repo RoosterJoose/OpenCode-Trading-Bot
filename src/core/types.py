@@ -159,6 +159,7 @@ class TradeRecord:
     entry_time: datetime
     exit_time: datetime
     regime: str = ""
+    entry_regime: str = ""
     r_multiple: float = 0.0
 
     @property

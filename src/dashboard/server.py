@@ -98,6 +98,16 @@ HTML = """<!DOCTYPE html>
         <div style="margin-top:6px">Winner at 30 trades</div>
       </div>
     </section>
+    <section id="ab-detail" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
+      <div style="background:linear-gradient(180deg,rgba(14,28,48,.86),rgba(7,17,30,.88));border:1px solid rgba(36,62,96,.75);border-radius:13px;padding:14px">
+        <div style="font-size:11px;letter-spacing:1.5px;color:#10e6ff;font-weight:700;margin-bottom:10px">PER-ASSET BREAKDOWN</div>
+        <div id="ab-per-asset" style="max-height:200px;overflow:auto;font-size:12px"></div>
+      </div>
+      <div style="background:linear-gradient(180deg,rgba(14,28,48,.86),rgba(7,17,30,.88));border:1px solid rgba(36,62,96,.75);border-radius:13px;padding:14px">
+        <div style="font-size:11px;letter-spacing:1.5px;color:#ffb11a;font-weight:700;margin-bottom:10px">PER-REGIME BREAKDOWN</div>
+        <div id="ab-per-regime" style="max-height:200px;overflow:auto;font-size:12px"></div>
+      </div>
+    </section>
     <section class="kpis">
       <div class="card kpi"><div class="label">Total Equity</div><div class="value" id="equity">—</div><div class="sub gain" id="equity-sub">—</div><canvas class="spark" id="spark-equity"></canvas></div>
       <div class="card kpi"><div class="label">Daily PnL</div><div class="value" id="daily-pnl">—</div><div class="sub" id="daily-pnl-sub">—</div><canvas class="spark" id="spark-daily"></canvas></div>
@@ -129,7 +139,7 @@ HTML = """<!DOCTYPE html>
   </main>
 </div>
 <script>
-const ASSETS=['BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','LINK','DOT','AAVE','LTC','NEAR','SUI','XLM','HBAR','BCH','ZEC','PEPE','SHIB','HYPE','ONDO','ENA'];let state={status:{},trades:[],positions:[],equity:[],signals:[],reflection:{},markets:[],range:'1M',query:'',learnings:{},health:{}};
+let perAsset=[],perRegime=[];const ASSETS=['BTC','ETH','SOL','BNB','XRP','DOGE','ADA','AVAX','LINK','DOT','AAVE','LTC','NEAR','SUI','XLM','HBAR','BCH','ZEC','PEPE','SHIB','HYPE','ONDO','ENA'];let state={status:{},trades:[],positions:[],equity:[],signals:[],reflection:{},markets:[],range:'1M',query:'',learnings:{},health:{}};
 const fmtUSD=n=>'$'+Number(n||0).toLocaleString(undefined,{maximumFractionDigits:2});const pct=n=>(Number(n||0)>=0?'+':'')+Number(n||0).toFixed(2)+'%';const cls=n=>Number(n||0)>=0?'positive':'negative';
 function now(){const d=new Date();document.getElementById('today').textContent=d.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'});document.getElementById('clock').textContent=d.toISOString().slice(11,19)}setInterval(now,1000);now();
 function drawLine(id, pts, color='#1d9bff', fill=true){const c=document.getElementById(id);if(!c)return;const r=c.getBoundingClientRect();c.width=Math.max(40,r.width*devicePixelRatio);c.height=Math.max(28,r.height*devicePixelRatio);const x=c.getContext('2d');x.scale(devicePixelRatio,devicePixelRatio);const w=r.width,h=r.height;x.clearRect(0,0,w,h);if(!pts||pts.length<2){pts=[0,1,0.6,1.4,1.2,1.8]}const min=Math.min(...pts),max=Math.max(...pts),rng=max-min||1;x.beginPath();pts.forEach((p,i)=>{const xx=i/(pts.length-1)*w;const yy=h-8-((p-min)/rng)*(h-16);i?x.lineTo(xx,yy):x.moveTo(xx,yy)});x.strokeStyle=color;x.lineWidth=2;x.stroke();if(fill){x.lineTo(w,h);x.lineTo(0,h);x.closePath();const g=x.createLinearGradient(0,0,0,h);g.addColorStop(0,color+'55');g.addColorStop(1,color+'00');x.fillStyle=g;x.fill()}}
@@ -143,6 +153,26 @@ function renderActivity(){const sigs=state.signals.slice(-8).reverse();const act
 function renderReflection(){const r=state.reflection;let html='<p><b>Today&#39;s Summary</b></p><p class="sub">Paper mode active. Local TA and Altfins metrics are both feeding entry confidence. Health checks restart the bot if snapshots go stale.</p>';if(r&&r.suggestions&&r.suggestions.length){html+='<p><b>Pending Suggestions</b></p>'+r.suggestions.map(s=>'<p class="sub">'+s.parameter+': '+s.current_value+' → '+s.suggested_value+'</p>').join('')}else html+='<p><b>Key Lesson</b></p><p class="sub">Reflection runs after enough closed paper trades.</p>';document.getElementById('reflection').innerHTML=html}
 function renderDailyReflection(){const r=state.dailyReflection;if(!r||!r.assets){document.getElementById('daily-reflection').innerHTML='<p class="sub">Waiting for end-of-day data.</p>';return}const sig=r.significant_moves||0;const miss=r.missed_moves||0;const catchable=r.potentially_catchable||0;let html='<p><b>'+r.date+'</b><span class="sub"> · '+r.bias+'</span></p>';html+='<p class="sub">'+sig+' significant moves · '+miss+' missed · '+catchable+' catchable</p>';if(r.learning&&r.learning.length){r.learning.forEach(l=>{if(l.type==='market_summary')return;html+='<div class="badge '+(l.type==='missed_by_config'?'positive':'neutral')+'">'+l.count+'x '+l.reason+'</div><p class="sub">'+l.action+'</p>'})}html+='<div style="max-height:200px;overflow:auto;margin-top:8px">'+r.assets.filter(a=>a.significant).slice(0,10).map(a=>'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border)"><span>'+a.asset+'</span><span class="'+(a.change_24h_pct>=0?'gain':'loss')+'">'+pct(a.change_24h_pct)+'</span></div>').join('')+'</div>';document.getElementById('daily-reflection').innerHTML=html}
 function renderHealth(){const h=state.health;if(!h||!h.checks){document.getElementById('daily-health').innerHTML='<p class="sub">Waiting for first health check.</p>';return}let html='<p><b>'+h.date+'</b><span class="badge '+(h.passed?'positive':'negative')+'">'+(h.passed?'PASS':'FAIL')+'</span></p>';if(h.warnings&&h.warnings.length){html+='<p><b>Warnings ('+h.warnings.length+')</b></p>'+h.warnings.slice(0,5).map(w=>'<p class="sub" style="color:var(--orange)">'+w+'</p>').join('')}if(h.failures&&h.failures.length){html+='<p><b>Failures ('+h.failures.length+')</b></p>'+h.failures.slice(0,5).map(f=>'<p class="sub" style="color:var(--red)">'+f+'</p>').join('')}if(!h.warnings.length&&!h.failures.length){html+='<p class="sub" style="color:var(--green)">All checks passed — no warnings.</p>'}document.getElementById('daily-health').innerHTML=html}
+function renderPerAsset(){
+  var el=document.getElementById('ab-per-asset');
+  if(!el)return;
+  if(!state.perAsset||!state.perAsset.length){el.innerHTML='<p class="sub">No trades yet</p>';return}
+  var rows=state.perAsset.slice(0,8).map(function(b){
+    var color=b.pnl_dollars>=0?'#39f07a':'#ff5d63';
+    return '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(36,62,96,.4)"><b style="color:#fff;min-width:50px">'+b.key+'</b><span style="color:#aebbd0">'+b.trades+'t '+b.wins+'W/'+b.losses+'L</span><span style="color:'+color+';font-weight:600">$'+b.pnl_dollars.toFixed(0)+'</span></div>'
+  }).join('');
+  el.innerHTML=rows
+}
+function renderPerRegime(){
+  var el=document.getElementById('ab-per-regime');
+  if(!el)return;
+  if(!state.perRegime||!state.perRegime.length){el.innerHTML='<p class="sub">No trades yet</p>';return}
+  var rows=state.perRegime.slice(0,8).map(function(b){
+    var color=b.pnl_dollars>=0?'#39f07a':'#ff5d63';
+    return '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(36,62,96,.4)"><b style="color:#fff;min-width:80px">'+b.key+'</b><span style="color:#aebbd0">'+b.trades+'t '+(b.win_rate*100).toFixed(0)+'%WR</span><span style="color:'+color+';font-weight:600">$'+b.pnl_dollars.toFixed(0)+'</span></div>'
+  }).join('');
+  el.innerHTML=rows
+}
 function renderCompare(){
   if(!state.compare||state.compare.error)return;
   var a=state.compare;
@@ -157,12 +187,45 @@ function renderCompare(){
   if(cMetaEl)cMetaEl.textContent=Number(con.total_trades||0)+' trades '+(con.win_rate?(con.win_rate*100).toFixed(0)+'% WR':'0% WR')+' '+(con.profit_factor?Number(con.profit_factor).toFixed(2):'0.00')+' PF'
 }
 function renderLearnings(){const c=state.learnings&&state.learnings.cumulative;if(!c||!c.total_days){document.getElementById('learnings').innerHTML='<p class="sub">Learning accumulation starts after multiple days of data.</p>';return}let html='<p><b>'+c.total_days+' days tracked</b><span class="sub"> · last update '+c.last_updated.slice(0,10)+'</span></p>';if(c.lessons&&c.lessons.length){html+=c.lessons.map(l=>'<div class="badge neutral">Lesson</div><p class="sub">'+l+'</p>').join('')}if(c.persistent_missed_reasons&&c.persistent_missed_reasons.length){html+='<p><b>Persistent Patterns</b></p>'+c.persistent_missed_reasons.slice(0,5).map(r=>'<p class="sub">'+r.reason+': '+r.count+'x</p>').join('')}if(c.most_frequently_bearish&&c.most_frequently_bearish.length){html+='<p><b>Most Bearish Assets</b> <span class="sub">('+c.most_frequently_bearish[0].days+' days)</span></p><div style="display:flex;flex-wrap:wrap;gap:8px">'+c.most_frequently_bearish.slice(0,6).map(a=>'<span class="badge negative">'+a.asset+'</span>').join('')+'</div>'}document.getElementById('learnings').innerHTML=html}
-async function load(){try{const [status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection','/api/markets','/api/daily-reflection','/api/learnings','/api/health','/api/compare'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health,compare:compare||{}};renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection();renderDailyReflection();renderLearnings();renderHealth();renderCompare()}catch(e){console.error(e)}}
+async function load(){try{const [status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health,compare,perAsset,perRegime]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection','/api/markets','/api/daily-reflection','/api/learnings','/api/health','/api/compare','/api/per-asset','/api/per-regime'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health,compare:compare||{},perAsset:perAsset||[],perRegime:perRegime||[]};renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection();renderDailyReflection();renderLearnings();renderHealth();renderCompare();renderPerAsset();renderPerRegime()}catch(e){console.error(e)}}
 document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-range]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.range=b.dataset.range;renderKpis()});document.getElementById('search').addEventListener('input',e=>{state.query=e.target.value;renderWatchlist()});window.addEventListener('resize',()=>renderKpis());load();setInterval(load,60000);
 </script>
 </body>
 </html>"""
 
+
+
+def _aggregate_by(trades, key_fn):
+    """Aggregate trades by a key function. Returns list of {key, trades, wins, losses, pnl, pnl_pct, avg_r}."""
+    buckets = {}
+    for t in trades:
+        k = key_fn(t)
+        if not k:
+            continue
+        if k not in buckets:
+            buckets[k] = []
+        buckets[k].append(t)
+    results = []
+    for k, ts in sorted(buckets.items(), key=lambda x: -len(x[1])):
+        wins = [t for t in ts if (t.get("pnl_pct") or 0) > 0]
+        losses = [t for t in ts if (t.get("pnl_pct") or 0) <= 0]
+        pnl = sum(t.get("pnl_dollars", 0) or 0 for t in ts)
+        pnl_pct = sum(t.get("pnl_pct", 0) or 0 for t in ts)
+        win_pnl = sum(t.get("pnl_dollars", 0) or 0 for t in wins)
+        loss_pnl = abs(sum(t.get("pnl_dollars", 0) or 0 for t in losses))
+        pf = win_pnl / loss_pnl if loss_pnl > 0 else 0
+        results.append({
+            "key": k,
+            "trades": len(ts),
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": len(wins) / len(ts) if ts else 0,
+            "profit_factor": round(pf, 2),
+            "pnl_dollars": round(pnl, 2),
+            "pnl_pct": round(pnl_pct, 2),
+            "avg_r": round(sum(t.get("r_multiple", 0) or 0 for t in ts) / len(ts), 3) if ts else 0,
+        })
+    return results
 
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, db_path: Path, compare_db_path: Path | None = None, **kwargs):
@@ -208,6 +271,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             "/api/learnings": self._api_learnings,
             "/api/lessons": self._api_lessons,
             "/api/param-changes": self._api_param_changes,
+            "/api/per-asset": self._api_per_asset,
+            "/api/per-regime": self._api_per_regime,
             "/api/compare": self._api_compare,
             "/api/readiness": self._api_readiness,
             "/api/intents": self._api_intents,
@@ -315,6 +380,26 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             conn.close()
         self._send_json(status)
 
+
+    def _api_per_asset(self):
+        """Return per-asset breakdown of trades."""
+        conn = self._connect()
+        try:
+            rows = conn.execute("SELECT * FROM trades").fetchall()
+            trades = [dict(r) for r in rows]
+            self._send_json(_aggregate_by(trades, lambda t: t.get("asset", "")))
+        finally:
+            conn.close()
+
+    def _api_per_regime(self):
+        """Return per-regime breakdown of trades."""
+        conn = self._connect()
+        try:
+            rows = conn.execute("SELECT * FROM trades").fetchall()
+            trades = [dict(r) for r in rows]
+            self._send_json(_aggregate_by(trades, lambda t: t.get("regime", "") or "unknown"))
+        finally:
+            conn.close()
     def _api_compare(self):
         """Return status from the comparison bot DB."""
         if not self.compare_db_path:
