@@ -780,23 +780,21 @@ class TradingLoop:
         if norm_vol < 0.0015:
             return RegimeType.DEAD_MARKET
 
-        # ADX as primary trend strength signal (overrides Hurst when strong)
+        # ADX + EMA slope — NotebookLM: replace Hurst/KER for crypto
+        # ADX > 25 indicates trending; EMA(9)/EMA(21) slope confirms direction
         adx_val = TradingLoop._adx(candles)
-        if adx_val > 50:
+        if adx_val > 35:
             return RegimeType.STRONGLY_TRENDING
-        if adx_val > 30:
+        if adx_val > 25:
             return RegimeType.TRENDING
 
-        # Joint classification: Hurst (memory) + Efficiency Ratio (direction/noise)
-        h = TradingLoop._hurst(closes)
-        er = TradingLoop._efficiency_ratio(closes)
-
-        if h > 0.55 and er > 0.60:
-            return RegimeType.STRONGLY_TRENDING
-        if h > 0.55:
-            return RegimeType.TRENDING
-        if h < 0.45 and er < 0.30:
-            return RegimeType.MEAN_REVERTING
+        # EMA slope as fallback trend detector (catches trends ADX misses)
+        fast_ema = TradingLoop._ema(closes, 9)
+        slow_ema = TradingLoop._ema(closes, 21)
+        if slow_ema > 0:
+            ema_slope = (fast_ema - slow_ema) / slow_ema
+            if abs(ema_slope) > 0.005:
+                return RegimeType.TRENDING
         return RegimeType.RANDOM_WALK
 
     @staticmethod
@@ -860,6 +858,16 @@ class TradingLoop:
         dx = abs(pdi - ndi) / (pdi + ndi) * 100 if (pdi + ndi) > 0 else 0.0
         return dx
 
+
+    @staticmethod
+    def _ema(closes: list[float], period: int) -> float:
+        if len(closes) < period + 1:
+            return closes[-1] if closes else 0.0
+        k = 2.0 / (period + 1)
+        ema_val = sum(closes[:period]) / period
+        for price in closes[period:]:
+            ema_val = price * k + ema_val * (1 - k)
+        return ema_val
     async def _close(
         self,
         asset: str,
@@ -867,18 +875,54 @@ class TradingLoop:
         price: float,
         reason: str,
         exchange: PaperPerpExchange,
+        close_pct: float = 1.0,
     ):
+        close_qty = pos.size * close_pct
         await exchange.place_order(Order(
             asset=asset,
             side=pos.side.opposite,
             order_type=OrderType.MARKET,
-            quantity=pos.size,
+            quantity=close_qty,
             reduce_only=True,
         ))
 
+        pnl_dollars = pos.unrealized_pnl * close_pct
+        r_mult = ((price - pos.entry_price) / pos.entry_price * pos.leverage) if pos.entry_price > 0 else 0.0
+
+        if close_pct < 1.0:
+            # Partial close (scale-out): close_pct of position, leave the rest
+            self.risk.record_trade(asset, pos.pnl_pct, pnl_dollars)
+            trade = {
+                "asset": asset,
+                "side": pos.side.value,
+                "entry_price": pos.entry_price,
+                "exit_price": price,
+                "size": close_qty,
+                "leverage": pos.leverage,
+                "pnl_pct": round(pos.pnl_pct, 2),
+                "pnl_dollars": round(pnl_dollars, 2),
+                "fees": 0.0,
+                "funding_paid": 0.0,
+                "exit_reason": reason,
+                "strategy": pos.strategy or "",
+                "signal_source": pos.signal_source or "",
+                "entry_confidence": pos.entry_confidence or 0.0,
+                "entry_time": pos.entry_time.isoformat(),
+                "exit_time": datetime.now(timezone.utc).isoformat(),
+                "r_multiple": round(r_mult, 3),
+            }
+            self.store.save_trade(trade)
+            # Reduce position size; move stop to breakeven
+            pos.size -= close_qty
+            pos.stop_loss = pos.entry_price
+            asyncio.ensure_future(self.notifier.position_closed(
+                asset, pos.side.value.upper(), pos.entry_price, price, pnl_dollars, reason, pos.strategy or "",
+            ))
+            return
+
+        # Full close (original logic)
         pnl_pct = pos.pnl_pct
         pnl_dollars = pos.unrealized_pnl
-        r_mult = ((price - pos.entry_price) / pos.entry_price * pos.leverage) if pos.entry_price > 0 else 0.0
 
         self.risk.record_trade(asset, pnl_pct, pnl_dollars)
         self.risk.record_position_close(asset)
@@ -886,7 +930,6 @@ class TradingLoop:
         for source in pos.component_sources:
             self.signal_tracker.record(source, pnl_pct > 0)
 
-        # Trigger cooldown on the strategy that owned this position
         if pos.strategy:
             for strat in self.strategies:
                 if strat.name() == pos.strategy and hasattr(strat, "on_exit"):
@@ -917,11 +960,6 @@ class TradingLoop:
         asyncio.ensure_future(self.notifier.position_closed(
             asset, pos.side.value.upper(), pos.entry_price, price, pnl_dollars, reason, pos.strategy or "",
         ))
-
-        logger.info(
-            "EXIT %s %s price=%.2f pnl=%.1f%% r=%.2f reason=%s",
-            asset, pos.side.value.upper(), price, pnl_pct, r_mult, reason,
-        )
 
     async def _maybe_reflect(self, exchange: PaperPerpExchange):
         now = datetime.now(timezone.utc)

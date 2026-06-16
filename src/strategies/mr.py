@@ -45,6 +45,7 @@ class MeanReversion(PerpStrategy):
         self.majors = majors or {"BTC", "ETH"}
         self.signal_tracker = signal_tracker
         self._cooldowns: dict[str, int] = {}
+        self._scaled_out: dict[str, bool] = {}
         self._rsi_history: dict[str, list[float]] = defaultdict(lambda: [])
 
     def name(self) -> str:
@@ -264,9 +265,15 @@ class MeanReversion(PerpStrategy):
         else:
             r_mult = (current_price - entry) / max(stop_dist, 0.001)
 
-        if r_mult >= self.tp1_r_mult:
-            self._cooldowns[asset] = self.cooldown_bars
-            return "tp1", current_price
+        # NotebookLM scale-out: 50% at 1.0R (tp1), 50% at 2.0R (tp2)
+        if not self._scaled_out.get(asset, False):
+            if r_mult >= 1.0:
+                self._scaled_out[asset] = True
+                return "tp1", current_price
+        else:
+            if r_mult >= 2.0:
+                self._cooldowns[asset] = self.cooldown_bars
+                return "tp2", current_price
 
         if funding_rate > self.funding_halt_threshold:
             if not is_short:
