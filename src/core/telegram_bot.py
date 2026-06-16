@@ -201,11 +201,7 @@ class TelegramBot:
 
     async def daily_drawdown(self, current_equity: float, peak_equity: float,
                                 drawdown_pct: float) -> None:
-        if drawdown_pct > 3.0 and self._rate_limit("drawdown", 3600):
-            await self.send(
-                f"Daily drawdown: {drawdown_pct:.1f}% "
-                f"(${peak_equity:.0f} \u2192 ${current_equity:.0f})"
-            )
+        pass
 
     def _rate_limit(self, key: str, min_interval: float) -> bool:
         now = time.time()
@@ -217,6 +213,8 @@ class TelegramBot:
 
     async def _send(self, text: str):
         if not self.enabled:
+            return
+        if not self._rate_limit("global", 30):
             return
         try:
             async with httpx.AsyncClient(timeout=10) as client:
