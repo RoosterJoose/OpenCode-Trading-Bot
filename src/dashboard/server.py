@@ -74,6 +74,30 @@ HTML = """<!DOCTYPE html>
       <label class="search">⌕ <input id="search" placeholder="Search markets, pairs, strategies..." autocomplete="off"><kbd>⌘ K</kbd></label>
       <div style="display:flex;gap:14px;align-items:center"><div class="pill"><i class="dot"></i> Bot Active</div><div class="profile"><div class="avatar">H</div><div><b>Hermes</b><br><span class="pro">Paper</span></div></div></div>
     </div>
+    <section id="ab-banner" style="background:linear-gradient(135deg,#1a0f2e,#0d1f3a,#1a0f2e);border:2px solid #ffb11a;border-radius:12px;padding:18px 24px;margin:18px 0;display:flex;align-items:center;gap:18px;box-shadow:0 0 32px rgba(255,177,26,.25)">
+      <div style="flex-shrink:0;font-size:36px">&#9876;</div>
+      <div style="flex:1">
+        <div style="font-size:11px;letter-spacing:2px;color:#ffb11a;font-weight:700;margin-bottom:4px">A/B TEST LIVE</div>
+        <div style="font-size:18px;font-weight:700;color:#fff;margin-bottom:8px">Conservative vs Aggressive Bot</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <div id="ab-conservative" style="background:rgba(16,230,255,.08);border:1px solid rgba(16,230,255,.3);border-radius:8px;padding:12px">
+            <div style="font-size:10px;letter-spacing:1.5px;color:#10e6ff;font-weight:700;margin-bottom:6px">CONSERVATIVE</div>
+            <div style="font-size:22px;font-weight:700;color:#fff" id="ab-conservative-equity">$11,273</div>
+            <div style="font-size:11px;color:#aebbd0;margin-top:4px" id="ab-conservative-meta">201 trades &middot; 49% WR &middot; 0.70 conf</div>
+          </div>
+          <div id="ab-aggressive" style="background:rgba(255,177,26,.08);border:1px solid rgba(255,177,26,.4);border-radius:8px;padding:12px">
+            <div style="font-size:10px;letter-spacing:1.5px;color:#ffb11a;font-weight:700;margin-bottom:6px">AGGRESSIVE</div>
+            <div style="font-size:22px;font-weight:700;color:#fff" id="ab-aggressive-equity">$11,277</div>
+            <div style="font-size:11px;color:#aebbd0;margin-top:4px" id="ab-aggressive-meta">0 trades &middot; 0% WR &middot; 0.55 conf</div>
+          </div>
+        </div>
+      </div>
+      <div style="flex-shrink:0;text-align:right;font-size:10px;color:#aebbd0;max-width:120px">
+        <div>Both starting at</div>
+        <div style="font-size:18px;color:#fff;font-weight:700">$11,273</div>
+        <div style="margin-top:6px">Winner at 30 trades</div>
+      </div>
+    </section>
     <section class="kpis">
       <div class="card kpi"><div class="label">Total Equity</div><div class="value" id="equity">—</div><div class="sub gain" id="equity-sub">—</div><canvas class="spark" id="spark-equity"></canvas></div>
       <div class="card kpi"><div class="label">Daily PnL</div><div class="value" id="daily-pnl">—</div><div class="sub" id="daily-pnl-sub">—</div><canvas class="spark" id="spark-daily"></canvas></div>
@@ -119,6 +143,19 @@ function renderActivity(){const sigs=state.signals.slice(-8).reverse();const act
 function renderReflection(){const r=state.reflection;let html='<p><b>Today&#39;s Summary</b></p><p class="sub">Paper mode active. Local TA and Altfins metrics are both feeding entry confidence. Health checks restart the bot if snapshots go stale.</p>';if(r&&r.suggestions&&r.suggestions.length){html+='<p><b>Pending Suggestions</b></p>'+r.suggestions.map(s=>'<p class="sub">'+s.parameter+': '+s.current_value+' → '+s.suggested_value+'</p>').join('')}else html+='<p><b>Key Lesson</b></p><p class="sub">Reflection runs after enough closed paper trades.</p>';document.getElementById('reflection').innerHTML=html}
 function renderDailyReflection(){const r=state.dailyReflection;if(!r||!r.assets){document.getElementById('daily-reflection').innerHTML='<p class="sub">Waiting for end-of-day data.</p>';return}const sig=r.significant_moves||0;const miss=r.missed_moves||0;const catchable=r.potentially_catchable||0;let html='<p><b>'+r.date+'</b><span class="sub"> · '+r.bias+'</span></p>';html+='<p class="sub">'+sig+' significant moves · '+miss+' missed · '+catchable+' catchable</p>';if(r.learning&&r.learning.length){r.learning.forEach(l=>{if(l.type==='market_summary')return;html+='<div class="badge '+(l.type==='missed_by_config'?'positive':'neutral')+'">'+l.count+'x '+l.reason+'</div><p class="sub">'+l.action+'</p>'})}html+='<div style="max-height:200px;overflow:auto;margin-top:8px">'+r.assets.filter(a=>a.significant).slice(0,10).map(a=>'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border)"><span>'+a.asset+'</span><span class="'+(a.change_24h_pct>=0?'gain':'loss')+'">'+pct(a.change_24h_pct)+'</span></div>').join('')+'</div>';document.getElementById('daily-reflection').innerHTML=html}
 function renderHealth(){const h=state.health;if(!h||!h.checks){document.getElementById('daily-health').innerHTML='<p class="sub">Waiting for first health check.</p>';return}let html='<p><b>'+h.date+'</b><span class="badge '+(h.passed?'positive':'negative')+'">'+(h.passed?'PASS':'FAIL')+'</span></p>';if(h.warnings&&h.warnings.length){html+='<p><b>Warnings ('+h.warnings.length+')</b></p>'+h.warnings.slice(0,5).map(w=>'<p class="sub" style="color:var(--orange)">'+w+'</p>').join('')}if(h.failures&&h.failures.length){html+='<p><b>Failures ('+h.failures.length+')</b></p>'+h.failures.slice(0,5).map(f=>'<p class="sub" style="color:var(--red)">'+f+'</p>').join('')}if(!h.warnings.length&&!h.failures.length){html+='<p class="sub" style="color:var(--green)">All checks passed — no warnings.</p>'}document.getElementById('daily-health').innerHTML=html}
+function renderCompare(){
+  if(!state.compare||state.compare.error)return;
+  var a=state.compare;
+  var con=state.status;
+  var eqEl=document.getElementById('ab-aggressive-equity');
+  var metaEl=document.getElementById('ab-aggressive-meta');
+  var cEqEl=document.getElementById('ab-conservative-equity');
+  var cMetaEl=document.getElementById('ab-conservative-meta');
+  if(eqEl)eqEl.textContent=fmtUSD(a.equity||0);
+  if(metaEl)metaEl.textContent=Number(a.total_trades||0)+' trades '+(a.win_rate?(a.win_rate*100).toFixed(0)+'% WR':'0% WR')+' '+(a.profit_factor?Number(a.profit_factor).toFixed(2):'0.00')+' PF');
+  if(cEqEl)cEqEl.textContent=fmtUSD(con.equity||0);
+  if(cMetaEl)cMetaEl.textContent=Number(con.total_trades||0)+' trades '+(con.win_rate?(con.win_rate*100).toFixed(0)+'% WR':'0% WR')+' '+(con.profit_factor?Number(con.profit_factor).toFixed(2):'0.00')+' PF'
+}
 function renderLearnings(){const c=state.learnings&&state.learnings.cumulative;if(!c||!c.total_days){document.getElementById('learnings').innerHTML='<p class="sub">Learning accumulation starts after multiple days of data.</p>';return}let html='<p><b>'+c.total_days+' days tracked</b><span class="sub"> · last update '+c.last_updated.slice(0,10)+'</span></p>';if(c.lessons&&c.lessons.length){html+=c.lessons.map(l=>'<div class="badge neutral">Lesson</div><p class="sub">'+l+'</p>').join('')}if(c.persistent_missed_reasons&&c.persistent_missed_reasons.length){html+='<p><b>Persistent Patterns</b></p>'+c.persistent_missed_reasons.slice(0,5).map(r=>'<p class="sub">'+r.reason+': '+r.count+'x</p>').join('')}if(c.most_frequently_bearish&&c.most_frequently_bearish.length){html+='<p><b>Most Bearish Assets</b> <span class="sub">('+c.most_frequently_bearish[0].days+' days)</span></p><div style="display:flex;flex-wrap:wrap;gap:8px">'+c.most_frequently_bearish.slice(0,6).map(a=>'<span class="badge negative">'+a.asset+'</span>').join('')+'</div>'}document.getElementById('learnings').innerHTML=html}
 async function load(){try{const [status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection','/api/markets','/api/daily-reflection','/api/learnings','/api/health'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health};renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection();renderDailyReflection();renderLearnings();renderHealth()}catch(e){console.error(e)}}
 document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-range]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.range=b.dataset.range;renderKpis()});document.getElementById('search').addEventListener('input',e=>{state.query=e.target.value;renderWatchlist()});window.addEventListener('resize',()=>renderKpis());load();setInterval(load,60000);
@@ -128,8 +165,9 @@ document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{document.que
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
-    def __init__(self, *args, db_path: Path, **kwargs):
+    def __init__(self, *args, db_path: Path, compare_db_path: Path | None = None, **kwargs):
         self.db_path = db_path
+        self.compare_db_path = compare_db_path
         super().__init__(*args, **kwargs)
 
     def do_GET(self):
@@ -170,6 +208,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             "/api/learnings": self._api_learnings,
             "/api/lessons": self._api_lessons,
             "/api/param-changes": self._api_param_changes,
+            "/api/compare": self._api_compare,
             "/api/readiness": self._api_readiness,
             "/api/intents": self._api_intents,
         }.get(api)
@@ -275,6 +314,39 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         finally:
             conn.close()
         self._send_json(status)
+
+    def _api_compare(self):
+        """Return status from the comparison bot DB."""
+        if not self.compare_db_path:
+            self._send_json({"error": "no compare_db_path configured"})
+            return
+        conn = sqlite3.connect(str(self.compare_db_path), timeout=5.0, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        data = {"equity": 10000, "peak_equity": 10000, "total_trades": 0, "win_rate": 0, "profit_factor": 0, "sharpe": 0, "sortino": 0}
+        try:
+            r = conn.execute("SELECT equity, peak_equity FROM equity_snapshots ORDER BY id DESC LIMIT 1").fetchone()
+            if r:
+                data.update({"equity": r["equity"], "peak_equity": r["peak_equity"]})
+            cnt = conn.execute("SELECT COUNT(*) as c FROM trades").fetchone()
+            data["total_trades"] = cnt["c"] if cnt else 0
+            trades = conn.execute("SELECT pnl_pct FROM trades ORDER BY id DESC LIMIT 100").fetchall()
+            if trades:
+                wins = [t["pnl_pct"] for t in trades if t["pnl_pct"] > 0]
+                losses = [t["pnl_pct"] for t in trades if t["pnl_pct"] < 0]
+                data["win_rate"] = len(wins) / len(trades) if trades else 0
+                if losses and sum(losses) != 0:
+                    data["profit_factor"] = abs(sum(wins) / sum(losses))
+                if len(trades) >= 5:
+                    import math
+                    rets = [t["pnl_pct"] for t in trades]
+                    m = sum(rets) / len(rets)
+                    s = math.sqrt(sum((r - m) ** 2 for r in rets) / len(rets))
+                    data["sharpe"] = round((m / s) * math.sqrt(365), 2) if s > 0 else 0.0
+        except Exception:
+            pass
+        finally:
+            conn.close()
+        self._send_json(data)
 
     def _api_trades(self):
         conn = self._connect()
@@ -512,10 +584,10 @@ class ThreadingServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
 
-def serve(db_path: Path = Path("data/hermes.db"), port: int = 8081):
+def serve(db_path: Path = Path("data/hermes.db"), port: int = 8081, compare_db_path: Path | None = None):
     class Handler(DashboardHandler):
         def __init__(self, *args, **kwargs):
-            super().__init__(*args, db_path=db_path, **kwargs)
+            super().__init__(*args, db_path=db_path, compare_db_path=compare_db_path, **kwargs)
 
     server = ThreadingServer(("0.0.0.0", port), Handler)
     print(f"Dashboard: http://0.0.0.0:{port}")
@@ -526,6 +598,13 @@ def serve(db_path: Path = Path("data/hermes.db"), port: int = 8081):
 
 
 if __name__ == "__main__":
-    db = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("data/hermes.db")
-    port = int(sys.argv[2]) if len(sys.argv) > 2 else 8081
-    serve(db, port)
+    import argparse
+    parser = argparse.ArgumentParser(description="Hermes Dashboard")
+    parser.add_argument("db_path", nargs="?", default="data/hermes.db", help="Primary database path")
+    parser.add_argument("port", nargs="?", type=int, default=8081, help="HTTP port")
+    parser.add_argument("--second-db", type=str, default=None, help="Aggressive bot DB path for comparison")
+    args = parser.parse_args()
+    db = Path(args.db_path)
+    port = args.port
+    compare = Path(args.second_db) if args.second_db else None
+    serve(db, port, compare)
