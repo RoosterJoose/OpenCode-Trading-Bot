@@ -12,6 +12,7 @@ Polling-based (no public webhook needed). Runs as background asyncio task.
 """
 import json
 import logging
+import time
 import asyncio
 from datetime import datetime, timezone
 
@@ -27,6 +28,7 @@ class TelegramBot:
         self.store = store
         self.base_url = f"https://api.telegram.org/bot{token}"
         self._last_update_id = 0
+        self._last_sent = {}
         self._running = False
 
     @property
@@ -51,6 +53,7 @@ class TelegramBot:
             await asyncio.sleep(5)
 
     def stop(self):
+        self._last_sent = {}
         self._running = False
 
     async def _get_updates(self):
@@ -198,7 +201,7 @@ class TelegramBot:
 
     async def daily_drawdown(self, current_equity: float, peak_equity: float,
                                 drawdown_pct: float) -> None:
-        if drawdown_pct > 3.0:
+        if drawdown_pct > 3.0 and self._rate_limit("drawdown", 3600):
             await self.send(
                 f"Daily drawdown: {drawdown_pct:.1f}% "
                 f"(${peak_equity:.0f} \u2192 ${current_equity:.0f})"
