@@ -140,7 +140,7 @@ class DonchianBreakout(PerpStrategy):
         else:
             breakout_pct = (lower - last.close) / lower
 
-        confidence = 0.55
+        confidence = 0.60
         if breakout_pct > 0.005:  # >0.5% beyond channel
             confidence += 0.05
         if breakout_pct > 0.015:  # >1.5% beyond channel
