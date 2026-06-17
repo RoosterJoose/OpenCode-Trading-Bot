@@ -239,14 +239,15 @@ def analyze_missed_move(
 def _get_bot_trade_stats(db_path: str) -> dict:
     """Read-only trade stats from a bot DB. Returns performance metrics dict."""
     stats: dict = {"total_trades": 0, "win_rate": 0, "profit_factor": 0,
-                   "total_pnl": 0, "avg_r": 0, "per_asset": {}, "per_regime": {}, "equity": 0}
+                   "total_pnl": 0, "pnl_after_fees": 0, "estimated_fees": 0,
+                   "avg_r": 0, "per_asset": {}, "per_regime": {}, "equity": 0}
     try:
         conn = sqlite3.connect(db_path, timeout=5)
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT value FROM state WHERE key = 'paper_equity'").fetchone()
         if row:
             stats["equity"] = round(float(json.loads(row["value"])), 2)
-        rows = conn.execute("SELECT pnl_dollars, pnl_pct, side, strategy, asset, regime, exit_reason FROM trades").fetchall()
+            rows = conn.execute("SELECT pnl_dollars, pnl_pct, side, strategy, asset, regime, exit_reason, size, entry_price FROM trades").fetchall()
         trades = [dict(r) for r in rows]
         stats["total_trades"] = len(trades)
         if trades:
@@ -258,6 +259,16 @@ def _get_bot_trade_stats(db_path: str) -> dict:
             total_loss = abs(sum(float(t.get("pnl_dollars", 0)) for t in losses)) if losses else 1
             stats["profit_factor"] = round(sum(float(t.get("pnl_dollars", 0)) for t in wins) / max(total_loss, 0.01), 2)
             stats["avg_r"] = round(sum(float(t.get("pnl_pct", 0)) for t in trades) / len(trades) / 100, 4) if trades else 0
+            # Estimate trading fees (paper exchange stores 0.0)
+            TAKER_FEE = 0.00025
+            total_fees = 0.0
+            for t in trades:
+                sz = float(t.get("size", 0))
+                ep = float(t.get("entry_price", 0))
+                notional = abs(sz * ep) if sz * ep else 0
+                total_fees += notional * TAKER_FEE * 2  # entry + exit
+            stats["estimated_fees"] = round(total_fees, 2)
+            stats["pnl_after_fees"] = round(stats["total_pnl"] - total_fees, 2)
             asset_map = {}
             for t in trades:
                 a = t.get("asset", "UNKNOWN")
@@ -298,13 +309,15 @@ def _build_ab_comparison(stats_c: dict, stats_a: dict) -> dict:
         return val
 
     diff = {}
-    for k in ("total_trades", "win_rate", "profit_factor", "total_pnl", "avg_r", "equity"):
+    for k in ("total_trades", "win_rate", "profit_factor", "total_pnl", "pnl_after_fees", "estimated_fees", "avg_r", "equity"):
         cv = stats_c.get(k, 0) or 0
         av = stats_a.get(k, 0) or 0
         if k == "total_trades":
             diff[k] = av - cv
         elif k in ("win_rate", "avg_r"):
             diff[k] = round(av - cv, 4)
+        elif k == "estimated_fees":
+            diff[k] = round(cv - av, 2)  # positive = conservative pays less
         else:
             diff[k] = round(av - cv, 2)
 
@@ -314,7 +327,7 @@ def _build_ab_comparison(stats_c: dict, stats_a: dict) -> dict:
         "diff": diff,
         "winner": None,
     }
-    for k in ("total_trades", "win_rate", "profit_factor", "total_pnl", "avg_r", "equity"):
+    for k in ("total_trades", "win_rate", "profit_factor", "total_pnl", "pnl_after_fees", "estimated_fees", "avg_r", "equity"):
         summary["conservative"][k] = stats_c.get(k)
         summary["aggressive"][k] = stats_a.get(k)
 

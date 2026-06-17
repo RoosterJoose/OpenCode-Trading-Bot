@@ -192,19 +192,24 @@ function renderABReflection(){
     +'<div class="small">PF '+c.profit_factor+'</div>'
     +'<div class="small">PnL $'+(c.total_pnl||0)+'</div>'
     +'<div class="small">Avg R '+c.avg_r+'</div>'
-    +'<div class="small">Equity $'+c.equity+'</div></div>'
+    +'<div class="small">Equity $'+c.equity+'</div>'
+    +'<div class="small">Fees $'+(c.estimated_fees||0)+'</div>'
+    +'<div class="small">PnL* $'+(c.pnl_after_fees!=null?c.pnl_after_fees:'-')+' after fees</div></div>'
     +'<div style="background:#0b1217;padding:8px;border-radius:6px;border-left:3px solid #f59430"><b style="color:#f59430">Aggressive</b>'
     +'<div class="small">'+a.total_trades+' trades</div>'
     +'<div class="small">WR '+(a.win_rate?Math.round(a.win_rate*100)+'%':'0%')+'</div>'
     +'<div class="small">PF '+a.profit_factor+'</div>'
     +'<div class="small">PnL $'+(a.total_pnl||0)+'</div>'
     +'<div class="small">Avg R '+a.avg_r+'</div>'
-    +'<div class="small">Equity $'+a.equity+'</div></div>'
+    +'<div class="small">Equity $'+a.equity+'</div>'
+    +'<div class="small">Fees $'+(a.estimated_fees||0)+'</div>'
+    +'<div class="small">PnL* $'+(a.pnl_after_fees!=null?a.pnl_after_fees:'-')+' after fees</div></div>'
     +'<div style="background:#0b1217;padding:8px;border-radius:6px;border-left:3px solid '+wc+'"><b>Current Winner</b>'
     +'<div style="color:'+wc+';font-size:24px;font-weight:700">'+w+'</div>'
     +'<div class="small">Margin: '+(diff.avg_r?Math.round(diff.avg_r*10000)/100+'%':'0%')+' on avg R</div>'
     +(d.conservative_reflection?'<div class="small">Bias: '+d.conservative_reflection.bias+'</div>':'')
-    +'</div></div>';
+    +'</div></div>'
+    +'<div style="margin-top:8px;font-size:10px;color:#888;grid-column:1/-1">* Est. fees at 0.025% taker (entry + exit). Paper mode records $0 fees.</div>';
 }
 function renderCompare(){
   if(!state.compare||state.compare.error)return;
