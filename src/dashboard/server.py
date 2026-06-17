@@ -108,6 +108,10 @@ HTML = """<!DOCTYPE html>
         <div id="ab-per-regime" style="max-height:200px;overflow:auto;font-size:12px"></div>
       </div>
     </section>
+      <div class="card section" style="border:1px solid #f59430;margin-bottom:12px">
+        <div class="head"><h3>A/B Comparison Report <span class="badge" style="background:#f59430;color:#000">automatic</span></h3></div>
+        <div id="ab-comparison"><p class="sub">Waiting for next daily reflection (00:05 UTC).</p></div>
+      </div>
     <section class="kpis">
       <div class="card kpi"><div class="label">Total Equity</div><div class="value" id="equity">—</div><div class="sub gain" id="equity-sub">—</div><canvas class="spark" id="spark-equity"></canvas></div>
       <div class="card kpi"><div class="label">Daily PnL</div><div class="value" id="daily-pnl">—</div><div class="sub" id="daily-pnl-sub">—</div><canvas class="spark" id="spark-daily"></canvas></div>
@@ -173,6 +177,35 @@ function renderPerRegime(){
   }).join('');
   el.innerHTML=rows
 }
+function renderABReflection(){
+  var el=document.getElementById('ab-comparison');
+  if(!el)return;
+  var d=state.abReflection;
+  if(!d||d.error){el.innerHTML='<p class="sub">A/B comparison report not yet available (runs at 00:05 UTC daily).</p>';return}
+  var c=d.conservative||{},a=d.aggressive||{},diff=d.diff||{},winner=d.winner;
+  var w=winner==='aggressive'?'Aggressive':winner==='conservative'?'Conservative':'Tied';
+  var wc=winner==='aggressive'?'#f59430':winner==='conservative'?'#0ff':'#888';
+  el.innerHTML='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:8px">'
+    +'<div style="background:#0b1217;padding:8px;border-radius:6px;border-left:3px solid #0ff"><b style="color:#0ff">Conservative</b>'
+    +'<div class="small">'+c.total_trades+' trades</div>'
+    +'<div class="small">WR '+(c.win_rate?Math.round(c.win_rate*100)+'%':'0%')+'</div>'
+    +'<div class="small">PF '+c.profit_factor+'</div>'
+    +'<div class="small">PnL $'+(c.total_pnl||0)+'</div>'
+    +'<div class="small">Avg R '+c.avg_r+'</div>'
+    +'<div class="small">Equity $'+c.equity+'</div></div>'
+    +'<div style="background:#0b1217;padding:8px;border-radius:6px;border-left:3px solid #f59430"><b style="color:#f59430">Aggressive</b>'
+    +'<div class="small">'+a.total_trades+' trades</div>'
+    +'<div class="small">WR '+(a.win_rate?Math.round(a.win_rate*100)+'%':'0%')+'</div>'
+    +'<div class="small">PF '+a.profit_factor+'</div>'
+    +'<div class="small">PnL $'+(a.total_pnl||0)+'</div>'
+    +'<div class="small">Avg R '+a.avg_r+'</div>'
+    +'<div class="small">Equity $'+a.equity+'</div></div>'
+    +'<div style="background:#0b1217;padding:8px;border-radius:6px;border-left:3px solid '+wc+'"><b>Current Winner</b>'
+    +'<div style="color:'+wc+';font-size:24px;font-weight:700">'+w+'</div>'
+    +'<div class="small">Margin: '+(diff.avg_r?Math.round(diff.avg_r*10000)/100+'%':'0%')+' on avg R</div>'
+    +(d.conservative_reflection?'<div class="small">Bias: '+d.conservative_reflection.bias+'</div>':'')
+    +'</div></div>';
+}
 function renderCompare(){
   if(!state.compare||state.compare.error)return;
   var a=state.compare;
@@ -187,7 +220,7 @@ function renderCompare(){
   if(cMetaEl)cMetaEl.textContent=Number(con.total_trades||0)+' trades '+(con.win_rate?(con.win_rate*100).toFixed(0)+'% WR':'0% WR')+' '+(con.profit_factor?Number(con.profit_factor).toFixed(2):'0.00')+' PF'
 }
 function renderLearnings(){const c=state.learnings&&state.learnings.cumulative;if(!c||!c.total_days){document.getElementById('learnings').innerHTML='<p class="sub">Learning accumulation starts after multiple days of data.</p>';return}let html='<p><b>'+c.total_days+' days tracked</b><span class="sub"> · last update '+c.last_updated.slice(0,10)+'</span></p>';if(c.lessons&&c.lessons.length){html+=c.lessons.map(l=>'<div class="badge neutral">Lesson</div><p class="sub">'+l+'</p>').join('')}if(c.persistent_missed_reasons&&c.persistent_missed_reasons.length){html+='<p><b>Persistent Patterns</b></p>'+c.persistent_missed_reasons.slice(0,5).map(r=>'<p class="sub">'+r.reason+': '+r.count+'x</p>').join('')}if(c.most_frequently_bearish&&c.most_frequently_bearish.length){html+='<p><b>Most Bearish Assets</b> <span class="sub">('+c.most_frequently_bearish[0].days+' days)</span></p><div style="display:flex;flex-wrap:wrap;gap:8px">'+c.most_frequently_bearish.slice(0,6).map(a=>'<span class="badge negative">'+a.asset+'</span>').join('')+'</div>'}document.getElementById('learnings').innerHTML=html}
-async function load(){try{const [status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health,compare,perAsset,perRegime]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection','/api/markets','/api/daily-reflection','/api/learnings','/api/health','/api/compare','/api/per-asset','/api/per-regime'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health,compare:compare||{},perAsset:perAsset||[],perRegime:perRegime||[]};renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection();renderDailyReflection();renderLearnings();renderHealth();renderCompare();renderPerAsset();renderPerRegime()}catch(e){console.error(e)}}
+async function load(){try{const [status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health,compare,perAsset,perRegime,abReflection]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection','/api/markets','/api/daily-reflection','/api/learnings','/api/health','/api/compare','/api/per-asset','/api/per-regime','/api/ab-reflection'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health,compare:compare||{},perAsset:perAsset||[],perRegime:perRegime||[],abReflection:abReflection||{}};renderABReflection();renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection();renderDailyReflection();renderLearnings();renderHealth();renderCompare();renderABReflection();renderPerAsset();renderPerRegime()}catch(e){console.error(e)}}
 document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-range]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.range=b.dataset.range;renderKpis()});document.getElementById('search').addEventListener('input',e=>{state.query=e.target.value;renderWatchlist()});window.addEventListener('resize',()=>renderKpis());load();setInterval(load,60000);
 </script>
 </body>
@@ -273,6 +306,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             "/api/param-changes": self._api_param_changes,
             "/api/per-asset": self._api_per_asset,
             "/api/per-regime": self._api_per_regime,
+            "/api/ab-reflection": self._api_ab_reflection,
             "/api/compare": self._api_compare,
             "/api/readiness": self._api_readiness,
             "/api/intents": self._api_intents,
@@ -400,6 +434,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self._send_json(_aggregate_by(trades, lambda t: t.get("regime", "") or "unknown"))
         finally:
             conn.close()
+    def _api_ab_reflection(self):
+        """Return A/B comparison report (written by daily_reflection.py)."""
+        conn = sqlite3.connect(str(self.db_path), timeout=5.0, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute("SELECT value FROM state WHERE key = 'ab_comparison'").fetchone()
+            if row:
+                self._send_json(json.loads(row["value"]))
+            else:
+                self._send_json({"error": "no ab_comparison report yet"})
+        except Exception as e:
+            self._send_json({"error": str(e)})
+        finally:
+            conn.close()
+
     def _api_compare(self):
         """Return status from the comparison bot DB."""
         if not self.compare_db_path:

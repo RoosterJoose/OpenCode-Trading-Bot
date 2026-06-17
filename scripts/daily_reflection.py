@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-Daily end-of-day market reflection.
+Daily end-of-day market reflection + A/B bot comparison.
 
 Fetches 24h of 1h candles for all tracked assets, detects significant moves,
-compares against Hermes signals, and generates learning insights for missed moves.
+compares against Hermes signals, and generates learning insights.
 
-Results written to SQLite state keys:
-  - daily_reflection: full daily report
-  - missed_moves: detailed missed-move analyses
+When a secondary DB path is provided, also reads the aggressive bot's trade
+stats and stores an A/B comparison report in the primary DB.
 """
 
 import json
@@ -53,8 +52,6 @@ def fetch_candles(asset: str, hours: int = 24) -> list[dict]:
     if not product:
         return []
 
-    # Handle PEM newlines: env file has \\n (literal backslash-n) when read directly
-    # or \n when loaded via systemd EnvironmentFile=
     pk = private_key.replace("\\\\n", "\n").replace("\\n", "\n")
     key = serialization.load_pem_private_key(pk.encode(), password=None, backend=default_backend())
 
@@ -169,8 +166,6 @@ def analyze_missed_move(
     bear = ema9 < ema21
     near_ema = abs(closes[-1] - ema9) / ema9 * 100 if ema9 else 999
 
-    # Determine what setup existed before the move
-    # Look at candles before the last 3 (ignore the move candles themselves)
     pre_closes = [c["close"] for c in candles[:-3]]
     pre_ema9 = ema(pre_closes, 9) if len(pre_closes) >= 9 else None
     pre_ema21 = ema(pre_closes, 21) if len(pre_closes) >= 21 else None
@@ -182,14 +177,11 @@ def analyze_missed_move(
     would_enter = False
     blocked_reason = ""
 
-    # Simulate strategy logic pre-move
-    if daily_change_pct < -1.0:  # Bearish move
-        # Trend short check
+    if daily_change_pct < -1.0:
         if pre_bull is False and pre_adx and pre_adx > 25 and pre_near_ema <= 4:
             would_enter = True
             blocked_reason = "trend_short"
         elif pre_rsi and pre_rsi > 72 and pre_adx and pre_adx < 30:
-            # MR short check
             would_enter = True
             blocked_reason = "mr_short"
         else:
@@ -203,13 +195,11 @@ def analyze_missed_move(
             if pre_rsi and pre_rsi < 28:
                 reasons.append(f"oversold_rsi_{pre_rsi:.0f}")
             blocked_reason = "; ".join(reasons) if reasons else "multiple_gates"
-    else:  # Bullish move
-        # Trend long check
+    else:
         if pre_bull is True and pre_adx and pre_adx > 25 and pre_near_ema <= 4:
             would_enter = True
             blocked_reason = "trend_long"
         elif pre_rsi and pre_rsi < 28 and pre_adx and pre_adx < 30:
-            # MR long check
             would_enter = True
             blocked_reason = "mr_long"
         else:
@@ -244,9 +234,107 @@ def analyze_missed_move(
     }
 
 
+# ── A/B bot trade stats ─────────────────────────────────────────────
+
+def _get_bot_trade_stats(db_path: str) -> dict:
+    """Read-only trade stats from a bot DB. Returns performance metrics dict."""
+    stats: dict = {"total_trades": 0, "win_rate": 0, "profit_factor": 0,
+                   "total_pnl": 0, "avg_r": 0, "per_asset": {}, "per_regime": {}, "equity": 0}
+    try:
+        conn = sqlite3.connect(db_path, timeout=5)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT value FROM state WHERE key = 'paper_equity'").fetchone()
+        if row:
+            stats["equity"] = round(float(json.loads(row["value"])), 2)
+        rows = conn.execute("SELECT pnl_dollars, pnl_pct, side, strategy, asset, regime, exit_reason FROM trades").fetchall()
+        trades = [dict(r) for r in rows]
+        stats["total_trades"] = len(trades)
+        if trades:
+            wins = [t for t in trades if float(t.get("pnl_dollars", 0)) > 0]
+            losses = [t for t in trades if float(t.get("pnl_dollars", 0)) <= 0]
+            stats["win_rate"] = round(len(wins) / len(trades), 4) if trades else 0
+            total_pnl = sum(float(t.get("pnl_dollars", 0)) for t in trades)
+            stats["total_pnl"] = round(total_pnl, 2)
+            total_loss = abs(sum(float(t.get("pnl_dollars", 0)) for t in losses)) if losses else 1
+            stats["profit_factor"] = round(sum(float(t.get("pnl_dollars", 0)) for t in wins) / max(total_loss, 0.01), 2)
+            stats["avg_r"] = round(sum(float(t.get("pnl_pct", 0)) for t in trades) / len(trades) / 100, 4) if trades else 0
+            asset_map = {}
+            for t in trades:
+                a = t.get("asset", "UNKNOWN")
+                if a not in asset_map:
+                    asset_map[a] = {"trades": 0, "wins": 0, "pnl": 0}
+                asset_map[a]["trades"] += 1
+                pnl = float(t.get("pnl_dollars", 0))
+                asset_map[a]["pnl"] += pnl
+                if pnl > 0:
+                    asset_map[a]["wins"] += 1
+            for a, d in asset_map.items():
+                d["win_rate"] = round(d["wins"] / d["trades"], 4) if d["trades"] else 0
+            stats["per_asset"] = asset_map
+            regime_map = {}
+            for t in trades:
+                r = t.get("regime", "") or "unknown"
+                if r not in regime_map:
+                    regime_map[r] = {"trades": 0, "wins": 0, "pnl": 0}
+                regime_map[r]["trades"] += 1
+                pnl = float(t.get("pnl_dollars", 0))
+                regime_map[r]["pnl"] += pnl
+                if pnl > 0:
+                    regime_map[r]["wins"] += 1
+            for r, d in regime_map.items():
+                d["win_rate"] = round(d["wins"] / d["trades"], 4) if d["trades"] else 0
+            stats["per_regime"] = regime_map
+        conn.close()
+    except Exception as e:
+        print(f"Error reading secondary DB {db_path}: {e}", file=sys.stderr)
+    return stats
+
+
+def _build_ab_comparison(stats_c: dict, stats_a: dict) -> dict:
+    """Build A/B comparison report from conservative and aggressive stats."""
+    def pnl_or_none(val):
+        if abs(val) < 0.001:
+            return None
+        return val
+
+    diff = {}
+    for k in ("total_trades", "win_rate", "profit_factor", "total_pnl", "avg_r", "equity"):
+        cv = stats_c.get(k, 0) or 0
+        av = stats_a.get(k, 0) or 0
+        if k == "total_trades":
+            diff[k] = av - cv
+        elif k in ("win_rate", "avg_r"):
+            diff[k] = round(av - cv, 4)
+        else:
+            diff[k] = round(av - cv, 2)
+
+    summary = {
+        "conservative": {"label": "Conservative (0.70 conf)"},
+        "aggressive": {"label": "Aggressive (0.55 conf)"},
+        "diff": diff,
+        "winner": None,
+    }
+    for k in ("total_trades", "win_rate", "profit_factor", "total_pnl", "avg_r", "equity"):
+        summary["conservative"][k] = stats_c.get(k)
+        summary["aggressive"][k] = stats_a.get(k)
+
+    # Determine winner by Sharpe-significant factors
+    if stats_c["total_trades"] >= 5 and stats_a["total_trades"] >= 5:
+        c_exp = stats_c.get("avg_r", 0) or 0
+        a_exp = stats_a.get("avg_r", 0) or 0
+        if c_exp > a_exp and abs(c_exp - a_exp) > 0.01:
+            summary["winner"] = "conservative"
+        elif a_exp > c_exp and abs(a_exp - c_exp) > 0.01:
+            summary["winner"] = "aggressive"
+        else:
+            summary["winner"] = "tied"
+
+    return summary
+
+
 # ── Main ─────────────────────────────────────────────────────────────
 
-def main(db_path: str):
+def main(db_path: str, secondary_db_path: str | None = None):
     db = Path(db_path)
     conn = sqlite3.connect(str(db))
     report_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -339,7 +427,6 @@ def main(db_path: str):
                     "action": "Strategy does not capture this pattern. Adjust parameters or add new entry type.",
                 })
 
-        # Weekly trend direction summary
         bull_count = sum(1 for r in results if r["change_24h_pct"] > 0)
         bear_count = sum(1 for r in results if r["change_24h_pct"] < 0)
         strong_bull = sum(1 for r in results if r["change_24h_pct"] > 3)
@@ -390,16 +477,14 @@ def main(db_path: str):
     conn.execute("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)",
                  ("missed_moves", json.dumps(missed_moves, default=str)))
 
-    # Also store a time-series entry for dashboard history
     try:
         conn.execute("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)",
                      (f"daily_reflection_{report_date}", json.dumps(daily_report, default=str)))
     except Exception:
         pass
 
-    # ── Insert lessons into append-only table (NotebookLM design) ────
+    # ── Insert lessons into append-only table ──────────────────────
     try:
-        # Clear old lessons for today before inserting fresh
         conn.execute("DELETE FROM lessons WHERE date = ?", (report_date,))
         for l in learning:
             if l["type"] == "market_summary":
@@ -418,9 +503,8 @@ def main(db_path: str):
     except Exception as e:
         print(f"Lesson insert error: {e}", file=sys.stderr)
 
-    # ── Cumulative learnings aggregation ─────────────────────────────
+    # ── Cumulative learnings aggregation ──────────────────────────
     try:
-        # Load all historical daily reflections
         rows = conn.execute("SELECT key, value FROM state WHERE key LIKE 'daily_reflection_%' AND key != ?",
                             (f"daily_reflection_{report_date}",)).fetchall()
         histories = []
@@ -438,7 +522,6 @@ def main(db_path: str):
                 seen_dates.add(d)
                 all_learnings.append(h)
 
-        # Count missed-move reasons across all history
         reason_counter: dict[str, int] = defaultdict(int)
         asset_move_counter: dict[str, int] = defaultdict(int)
         asset_bull_counter: dict[str, int] = defaultdict(int)
@@ -454,13 +537,11 @@ def main(db_path: str):
                 elif a["change_24h_pct"] < 0:
                     asset_bear_counter[a["asset"]] += 1
 
-        # Count missed-move reasons
         for rep in all_learnings:
             for l in rep.get("learning", []):
                 if l["type"] != "market_summary" and l.get("reason"):
                     reason_counter[l["reason"]] += l.get("count", 1)
 
-        # Find top consistent losers (most bear days)
         top_bear = sorted(asset_bear_counter.items(), key=lambda x: -x[1])[:5]
         top_bull = sorted(asset_bull_counter.items(), key=lambda x: -x[1])[:5]
 
@@ -477,7 +558,6 @@ def main(db_path: str):
             "lessons": [],
         }
 
-        # Generate persistent lessons from patterns
         if reason_counter:
             top_reason = max(reason_counter.items(), key=lambda x: x[1])
             if top_reason[1] >= 2:
@@ -504,7 +584,6 @@ def main(db_path: str):
         conn.execute("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)",
                      ("cumulative_learnings", json.dumps(cumulative, default=str)))
 
-        # Individual asset learning records
         asset_lessons = {}
         for rep in all_learnings:
             for a in rep.get("assets", []):
@@ -523,6 +602,27 @@ def main(db_path: str):
     except Exception as e:
         print(f"Cumulative learning error: {e}", file=sys.stderr)
 
+    # ── A/B comparison (secondary bot) ──────────────────────────────
+    if secondary_db_path:
+        secondary_path = Path(secondary_db_path)
+        if secondary_path.exists():
+            stats_c = _get_bot_trade_stats(db_path)
+            stats_a = _get_bot_trade_stats(secondary_db_path)
+            comparison = _build_ab_comparison(stats_c, stats_a)
+            comparison["date"] = report_date
+            comparison["conservative_reflection"] = {
+                "significant_moves": total_significant,
+                "missed_moves": total_missed,
+                "catchable": total_entered,
+                "bias": bias,
+            }
+            conn.execute("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)",
+                         ("ab_comparison", json.dumps(comparison, default=str)))
+            print(f"A/B comparison: {stats_c['total_trades']}t vs {stats_a['total_trades']}t | "
+                  f"winner={comparison['winner']}")
+        else:
+            print(f"Secondary DB not found: {secondary_db_path}", file=sys.stderr)
+
     conn.commit()
     conn.close()
 
@@ -532,6 +632,7 @@ def main(db_path: str):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: daily_reflection.py <db_path>")
+        print("Usage: daily_reflection.py <db_path> [secondary_db_path]")
         sys.exit(1)
-    main(sys.argv[1])
+    secondary = sys.argv[2] if len(sys.argv) > 2 else None
+    main(sys.argv[1], secondary)
