@@ -777,14 +777,20 @@ class TradingLoop:
         atr = sum(trs) / len(trs) if trs else 0
         norm_vol = atr / last if last > 0 else 0
 
-        if norm_vol > 0.03:
-            return RegimeType.HIGH_VOL
         if norm_vol < 0.0015:
             return RegimeType.DEAD_MARKET
 
-        # ADX + EMA slope — NotebookLM: replace Hurst/KER for crypto
-        # ADX > 25 indicates trending; EMA(9)/EMA(21) slope confirms direction
+        # Regime Stack: ADX first (direction), vol modifies (confidence)
+        # High-vol trending -> Trend/Donchian tradeable (scaled risk)
+        # High-vol choppy -> blocked for all strategies
         adx_val = TradingLoop._adx(candles)
+
+        if norm_vol > 0.03:
+            if adx_val > 25:
+                return RegimeType.STRONGLY_TRENDING
+            return RegimeType.HIGH_VOL
+
+        # Normal volatility: standard ADX/EMA classification
         if adx_val > 35:
             return RegimeType.STRONGLY_TRENDING
         if adx_val > 25:
