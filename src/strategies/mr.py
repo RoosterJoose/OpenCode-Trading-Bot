@@ -155,16 +155,17 @@ class MeanReversion(PerpStrategy):
         if risk_r <= 0:
             return None
 
-        confidence = 0.5
         tag = "rsi_oversold" if is_long else "rsi_overbought"
         sources = [tag]
+        confidence = 0.5
         if rsi is not None:
-            if is_long and rsi <= 20:
-                confidence += 0.2
-                sources.append("deep_oversold")
-            elif not is_long and rsi >= 80:
-                confidence += 0.2
-                sources.append("deep_overbought")
+            if is_long:
+                rsi_score = max(0.0, min(1.0, (50.0 - rsi) / (50.0 - oversold_th)))
+            else:
+                rsi_score = max(0.0, min(1.0, (rsi - 50.0) / (overbought_th - 50.0)))
+            smooth_contribution = rsi_score * 0.22
+            confidence += smooth_contribution
+            sources.append(f"rsi_contrib_{smooth_contribution:.2f}")
 
         # NotebookLM round 10: confidence boost from stochastic RSI / BB touch
         if is_stoch_oversold or is_stoch_overbought:
