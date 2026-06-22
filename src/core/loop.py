@@ -964,6 +964,8 @@ class TradingLoop:
             "entry_time": pos.entry_time.isoformat(),
             "exit_time": datetime.now(timezone.utc).isoformat(),
             "r_multiple": round(r_mult, 3),
+            "regime": pos.regime or "",
+            "entry_regime": pos.entry_regime or pos.regime or "",
         }
         self.store.save_trade(trade)
 
