@@ -72,6 +72,8 @@ class PerpRiskManager:
         self._active_positions: set[str] = set()
         self._gross_exposure: float = 0.0
         self.max_consecutive_losses: int = 3
+        self.max_global_losses: int = 3
+        self._global_loss_streak: int = 0
 
     def update_equity(self, equity: float, gross_exposure: float):
         self.current_equity = equity
@@ -118,6 +120,10 @@ class PerpRiskManager:
         return True, "ok"
 
     def consecutive_loss_allows(self, asset: str) -> tuple[bool, str]:
+        # Portfolio-level kill-switch: 3 consecutive losses across ANY asset = full halt
+        if self._global_loss_streak >= self.max_global_losses:
+            return False, f"portfolio_loss_streak: {self._global_loss_streak} >= {self.max_global_losses}"
+        # Per-asset gate
         cls = self._consecutive_losses.get(asset, 0)
         if cls >= self.max_consecutive_losses:
             return False, f"consecutive_losses: {cls} >= {self.max_consecutive_losses}"

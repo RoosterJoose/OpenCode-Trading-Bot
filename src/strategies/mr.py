@@ -26,7 +26,7 @@ class MeanReversion(PerpStrategy):
         atr_period: int = 14,
         cooldown_bars: int = 12,
         min_volume_usd: float = 2_000_000,
-        tp1_r_mult: float = 1.0,
+        tp1_r_mult: float = 0.5,
         tp2_r_mult: float = 1.5,
         tp3_r_mult: float = 3.0,
         max_hold_hours: float = 48.0,
@@ -266,13 +266,13 @@ class MeanReversion(PerpStrategy):
         else:
             r_mult = (current_price - entry) / max(stop_dist, 0.001)
 
-        # NotebookLM scale-out: 50% at 1.0R (tp1), 50% at 2.0R (tp2)
+        # NotebookLM scale-out: 50% at 0.5R (tp1), 50% at 2.0R (tp2)
         if not self._scaled_out.get(asset, False):
-            if r_mult >= 1.0:
+            if r_mult >= self.tp1_r_mult:
                 self._scaled_out[asset] = True
                 return "tp1", current_price
         else:
-            if r_mult >= 2.0:
+            if r_mult >= self.tp2_r_mult:
                 self._cooldowns[asset] = self.cooldown_bars
                 return "tp2", current_price
 
