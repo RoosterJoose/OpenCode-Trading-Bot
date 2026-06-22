@@ -150,6 +150,13 @@ class PerpRiskManager:
             return False, f"oi_velocity: {vel:.1f}% > {self.oi_velocity_threshold}%"
         return True, "oi_ok"
 
+    def spread_gate_allows(self, asset: str, spread_pct: float, max_spread: float = 0.08) -> tuple[bool, str]:
+        if spread_pct <= 0:
+            return True, "spread_ok"
+        if spread_pct > max_spread:
+            return False, f"spread: {spread_pct:.3f}% > {max_spread}%"
+        return True, "spread_ok"
+
     # ── Funding rate scoring (NotebookLM: -0.1% = max long confidence) ──
 
     def funding_score(self, rate: float, side: Side) -> float:

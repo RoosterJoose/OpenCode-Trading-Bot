@@ -510,6 +510,12 @@ class TradingLoop:
         if not oi_ok:
             return
 
+        # Bid-ask spread micro-filter (NotebookLM: block if > 0.08%)
+        spread_pct = hl.get_spread(asset)
+        spread_ok, spread_msg = self.risk.spread_gate_allows(asset, spread_pct)
+        if not spread_ok:
+            return
+
         funding_ok, funding_msg = self.risk.funding_gate(funding_rate)
         if not funding_ok:
             return

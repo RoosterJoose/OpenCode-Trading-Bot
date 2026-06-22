@@ -74,6 +74,7 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
         self._latest_funding: dict[str, float] = {}
         self._latest_oi: dict[str, float] = {}
         self._latest_changes_24h: dict[str, float] = {}
+        self._latest_spread: dict[str, float] = {}  # (ask-bid)/mid * 100
         self._perp_configs: dict[str, PerpConfig] = {}
         self._candle_cache: dict[str, list[PerpCandle]] = defaultdict(list)
 
@@ -231,7 +232,19 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
             asset = PRODUCT_TO_ASSET[pid]
             price_str = p.get("price", "0")
             try:
-                price = float(price_str)
+                bid_str = p.get("best_bid", "0")
+            ask_str = p.get("best_ask", "0")
+            try:
+                bid = float(bid_str) if bid_str else 0.0
+                ask = float(ask_str) if ask_str else 0.0
+            except (ValueError, TypeError):
+                bid = ask = 0.0
+            if bid > 0 and ask > 0:
+                mid = (bid + ask) / 2.0
+                if mid > 0:
+                    spread_pct = ((ask - bid) / mid) * 100
+                    self._latest_spread[asset] = spread_pct
+            price = float(price_str)
             except (ValueError, TypeError):
                 price = 0.0
             if price > 0:
@@ -246,6 +259,10 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
         if not result:
             logger.warning("fetch_all_mids: 0/%d monitored assets priced", len(ASSET_TO_PRODUCT))
         return result
+
+    def get_spread(self, asset: str) -> float:
+        """Return bid-ask spread as percentage of mid price."""
+        return self._latest_spread.get(asset, 0.0)
 
     async def fetch_open_interest(self) -> dict[str, float]:
         products = [p for p in (await self._fetch_all_products()) if p.get("product_id", "") in PRODUCT_TO_ASSET]
