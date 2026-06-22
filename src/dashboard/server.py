@@ -363,19 +363,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 status["effective_leverage"] = gross / status["equity"] if status["equity"] else 0
             count_row = conn.execute("SELECT COUNT(*) as cnt FROM trades").fetchone()
             status["total_trades"] = count_row["cnt"] if count_row else 0
-            trades = conn.execute("SELECT pnl_pct, side FROM trades ORDER BY id DESC LIMIT 100").fetchall()
-            if trades:
-                wins = [t["pnl_pct"] for t in trades if t["pnl_pct"] > 0]
-                losses = [t["pnl_pct"] for t in trades if t["pnl_pct"] < 0]
-                status["win_rate"] = len(wins) / len(trades) if trades else 0
-                if losses and sum(losses) != 0:
-                    status["profit_factor"] = abs(sum(wins) / sum(losses))
-                if len(trades) >= 5:
-                    import math
-                    returns = [t["pnl_pct"] for t in trades]
-                    m = sum(returns) / len(returns)
-                    s = math.sqrt(sum((r - m) ** 2 for r in returns) / len(returns))
-                    status["sharpe"] = round((m / s) * math.sqrt(365), 2) if s > 0 else 0.0
+            all_trades = conn.execute("SELECT pnl_dollars, pnl_pct, side FROM trades").fetchall()
+            if all_trades:
+                t_wins = [t["pnl_dollars"] for t in all_trades if t["pnl_dollars"] > 0]
+                t_losses = [t["pnl_dollars"] for t in all_trades if t["pnl_dollars"] < 0]
+                status["win_rate"] = len(t_wins) / len(all_trades) if all_trades else 0
+                total_loss = abs(sum(t_losses)) if t_losses else 1
+                status["profit_factor"] = round(sum(t_wins) / total_loss, 2) if total_loss > 0 else 0.0
+
+            last_100 = conn.execute("SELECT pnl_pct, pnl_dollars FROM trades ORDER BY id DESC LIMIT 100").fetchall()
+            if len(last_100) >= 5:
+                import math
+                returns = [t["pnl_pct"] for t in last_100]
+                m = sum(returns) / len(returns)
+                s = math.sqrt(sum((r - m) ** 2 for r in returns) / len(returns))
+                status["sharpe"] = round((m / s) * math.sqrt(365), 2) if s > 0 else 0.0
 
                 # Sortino ratio: downside deviation only
                 neg_returns = [r for r in returns if r < 0]
@@ -385,14 +387,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 else:
                     status["sortino"] = status["sharpe"]
 
-                # Expectancy in R-multiples
-                r_vals = [abs(t["pnl_pct"] / 100) for t in trades[:100]]
+                # Expectancy in R-multiples (from dollar PnL)
+                r_vals = [abs(t["pnl_pct"] / 100) for t in last_100]
                 status["expectancy"] = round(sum(r_vals) / len(r_vals), 3) if r_vals else 0
 
                 # Rolling 20-trade win rate
-                last_20 = trades[:20]
+                last_20 = last_100[:20]
                 if last_20:
-                    wins_20 = sum(1 for t in last_20 if t["pnl_pct"] > 0)
+                    wins_20 = sum(1 for t in last_20 if t["pnl_dollars"] > 0)
                     status["rolling_wr"] = round(wins_20 / len(last_20), 3)
                     status["rolling_trades"] = len(last_20)
 
@@ -439,16 +441,63 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self._send_json(_aggregate_by(trades, lambda t: t.get("regime", "") or "unknown"))
         finally:
             conn.close()
+    def _get_live_bot_stats(self, db_path):
+        """Read live stats from a bot DB (equity, total_trades, win_rate, profit_factor)."""
+        stats = {"equity": 0, "total_trades": 0, "win_rate": 0, "profit_factor": 0}
+        try:
+            conn = sqlite3.connect(str(db_path), timeout=5.0, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT equity FROM equity_snapshots ORDER BY id DESC LIMIT 1").fetchone()
+            if row:
+                stats["equity"] = round(row["equity"], 2)
+            rows = conn.execute("SELECT pnl_dollars FROM trades").fetchall()
+            trades = [dict(r) for r in rows]
+            stats["total_trades"] = len(trades)
+            if trades:
+                wins = [t for t in trades if float(t.get("pnl_dollars", 0)) > 0]
+                losses = [t for t in trades if float(t.get("pnl_dollars", 0)) <= 0]
+                stats["win_rate"] = round(len(wins) / len(trades), 4)
+                total_loss = abs(sum(float(t.get("pnl_dollars", 0)) for t in losses)) if losses else 1
+                stats["profit_factor"] = round(
+                    sum(float(t.get("pnl_dollars", 0)) for t in wins) / max(total_loss, 0.01), 2)
+            conn.close()
+        except Exception:
+            pass
+        return stats
+
     def _api_ab_reflection(self):
-        """Return A/B comparison report (written by daily_reflection.py)."""
+        """Return A/B comparison report with live data overlaid on snapshot."""
         conn = sqlite3.connect(str(self.db_path), timeout=5.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         try:
             row = conn.execute("SELECT value FROM state WHERE key = 'ab_comparison'").fetchone()
             if row:
-                self._send_json(json.loads(row["value"]))
+                result = json.loads(row["value"])
             else:
-                self._send_json({"error": "no ab_comparison report yet"})
+                result = {"conservative": {}, "aggressive": {}, "diff": {}, "winner": None}
+            # Overlay live data from both DBs
+            live_con = self._get_live_bot_stats(self.db_path)
+            result["conservative"].update(live_con)
+            if self.compare_db_path:
+                live_agg = self._get_live_bot_stats(self.compare_db_path)
+                result["aggressive"].update(live_agg)
+            # Recompute diff with live data
+            c = result["conservative"]
+            a = result["aggressive"]
+            diff = {}
+            for k in ("total_trades", "win_rate", "profit_factor", "equity"):
+                cv = c.get(k, 0) or 0
+                av = a.get(k, 0) or 0
+                if k == "total_trades":
+                    diff[k] = av - cv
+                elif k in ("win_rate",):
+                    diff[k] = round(av - cv, 4)
+                else:
+                    diff[k] = round(av - cv, 2)
+            result["diff"] = diff
+            # Mark as live-synced
+            result["live_data"] = True
+            self._send_json(result)
         except Exception as e:
             self._send_json({"error": str(e)})
         finally:
@@ -463,24 +512,27 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         conn.row_factory = sqlite3.Row
         data = {"equity": 10000, "peak_equity": 10000, "total_trades": 0, "win_rate": 0, "profit_factor": 0, "sharpe": 0, "sortino": 0}
         try:
-            r = conn.execute("SELECT equity, peak_equity FROM equity_snapshots ORDER BY id DESC LIMIT 1").fetchone()
-            if r:
-                data.update({"equity": r["equity"], "peak_equity": r["peak_equity"]})
+            pe = conn.execute("SELECT value FROM state WHERE key='paper_equity'").fetchone()
+            pp = conn.execute("SELECT value FROM state WHERE key='paper_peak_equity'").fetchone()
+            if pe:
+                data["equity"] = round(float(pe["value"].strip('"').strip("'")), 2)
+            if pp:
+                data["peak_equity"] = round(float(pp["value"].strip('"').strip("'")), 2)
             cnt = conn.execute("SELECT COUNT(*) as c FROM trades").fetchone()
             data["total_trades"] = cnt["c"] if cnt else 0
-            trades = conn.execute("SELECT pnl_pct FROM trades ORDER BY id DESC LIMIT 100").fetchall()
-            if trades:
-                wins = [t["pnl_pct"] for t in trades if t["pnl_pct"] > 0]
-                losses = [t["pnl_pct"] for t in trades if t["pnl_pct"] < 0]
-                data["win_rate"] = len(wins) / len(trades) if trades else 0
-                if losses and sum(losses) != 0:
-                    data["profit_factor"] = abs(sum(wins) / sum(losses))
-                if len(trades) >= 5:
-                    import math
-                    rets = [t["pnl_pct"] for t in trades]
-                    m = sum(rets) / len(rets)
-                    s = math.sqrt(sum((r - m) ** 2 for r in rets) / len(rets))
-                    data["sharpe"] = round((m / s) * math.sqrt(365), 2) if s > 0 else 0.0
+            all_t = conn.execute("SELECT pnl_dollars FROM trades").fetchall()
+            if all_t:
+                t_wins = [t["pnl_dollars"] for t in all_t if t["pnl_dollars"] > 0]
+                t_losses = [t["pnl_dollars"] for t in all_t if t["pnl_dollars"] < 0]
+                data["win_rate"] = len(t_wins) / len(all_t) if all_t else 0
+                total_loss = abs(sum(t_losses)) if t_losses else 1
+                data["profit_factor"] = round(sum(t_wins) / total_loss, 2) if total_loss > 0 else 0.0
+            if len(all_t) >= 5:
+                import math
+                returns = [t["pnl_dollars"] for t in all_t]
+                m = sum(returns) / len(returns)
+                s = math.sqrt(sum((r - m) ** 2 for r in returns) / len(returns))
+                data["sharpe"] = round((m / s) * math.sqrt(365), 2) if s > 0 else 0.0
         except Exception:
             pass
         finally:
