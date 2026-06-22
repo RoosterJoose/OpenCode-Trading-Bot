@@ -266,8 +266,7 @@ class TrendFollow(PerpStrategy):
             stop_dist = max(min_dist, min(max_dist, atr_dist))
 
             # Chandelier anchor: highest high / lowest low SINCE entry
-            entry_time = position.entry_time
-            since_entry = [c for c in candles[-self.atr_period:] if c.timestamp >= entry_time.timestamp()]
+            since_entry = [c for c in candles if c.timestamp >= position.entry_time.timestamp()]
             if not since_entry:
                 since_entry = [candles[-1]]
 
