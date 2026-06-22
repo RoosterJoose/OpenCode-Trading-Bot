@@ -21,7 +21,7 @@ from src.strategies.base import PerpStrategy
 class MeanReversion(PerpStrategy):
     def __init__(
         self,
-        rsi_oversold: float = 30.0,
+        rsi_oversold: float = 40.0,
         rsi_period: int = 14,
         atr_period: int = 14,
         cooldown_bars: int = 12,
@@ -94,8 +94,8 @@ class MeanReversion(PerpStrategy):
 
         # NotebookLM round 10: Stochastic RSI hits 0/100 even in slow-bleed regimes
         stoch_k = self._stoch_rsi(candles)
-        is_stoch_oversold = stoch_k is not None and stoch_k <= 0.10
-        is_stoch_overbought = stoch_k is not None and stoch_k >= 0.90
+        is_stoch_oversold = stoch_k is not None and stoch_k <= 0.20
+        is_stoch_overbought = stoch_k is not None and stoch_k >= 0.80
 
         # Bollinger Band touch — adaptive to current volatility
         bb_pos = self._bb_touch(candles)
