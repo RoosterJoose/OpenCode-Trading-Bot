@@ -34,7 +34,7 @@ class TrendFollow(PerpStrategy):
         psar_step: float = 0.015,
         psar_max_af: float = 0.18,
         psar_switch_hours: float = 48.0,
-        min_volume_usd: float = 30_000_000,
+        min_volume_usd: float = 0,
         min_oi_usd: float = 5_000_000,
         cooldown_cycles: int = 30,
         majors: set | None = None,
@@ -82,6 +82,8 @@ class TrendFollow(PerpStrategy):
             return None
 
         last = candles[-1]
+        regime_str = regime.value
+        logger.info("TREND %s: PASSED regime=%s — checking breakout", asset, regime_str)
         vol_min = self._get_threshold(asset, "volume_min_usd", self.min_volume_usd)
         if last.volume * last.close < vol_min:
             return None
@@ -103,6 +105,7 @@ class TrendFollow(PerpStrategy):
         is_long_breakout = last.close > upper
         is_short_breakout = last.close < lower
         if not (is_long_breakout or is_short_breakout):
+            logger.info("TREND %s: no breakout close=%.2f upper=%.2f lower=%.2f", asset, last.close, upper, lower)
             return None
 
         # Asset-specific drift regime

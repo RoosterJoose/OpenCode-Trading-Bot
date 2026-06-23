@@ -27,7 +27,7 @@ class DonchianBreakout(PerpStrategy):
         atr_trail_major: float = 2.0,
         atr_trail_alt: float = 3.0,
         cooldown_cycles: int = 30,
-        min_volume_usd: float = 2_000_000,
+        min_volume_usd: float = 0,
         majors: set | None = None,
         signal_tracker=None,
     ):

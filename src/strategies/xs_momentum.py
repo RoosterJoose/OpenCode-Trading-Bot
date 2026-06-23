@@ -33,7 +33,7 @@ class CrossSectionalMomentum(PerpStrategy):
         lookback_candles: int = 168,  # 7d × 24h
         top_n: int = 3,
         bottom_n: int = 3,
-        min_volume_usd: float = 2_000_000,
+        min_volume_usd: float = 0,
         cooldown_cycles: int = 60,
         profit_target_pct: float = 5.0,
         stop_loss_pct: float = 3.0,
