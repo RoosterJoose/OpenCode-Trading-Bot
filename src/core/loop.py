@@ -91,7 +91,10 @@ class TradingLoop:
             .get("assets", ASSET_UNIVERSE)
         )
         self.candle_cache: dict[str, list[PerpCandle]] = {}
-        self.candle_4h_cache: dict[str, list[PerpCandle]] = {}  # 4h aggregated for regime detection
+        self.candle_4h_cache: dict[str, list[PerpCandle]] = {}
+        self._restore_candle_cache()  # 4h aggregated for regime detection
+        self._assets_with_candles: set[str] = set()
+        self._asset_coverage_warned: bool = False
         self.signal_cache: dict[str, list[Signal]] = defaultdict(list)
         self._stop_event = asyncio.Event()
         self._suggested_params: list[dict] = []
@@ -183,6 +186,29 @@ class TradingLoop:
         self.store.close()
         logger.info("Shutdown complete")
 
+    def _restore_candle_cache(self) -> None:
+        """Restore persisted candle cache on startup to avoid silent data loss on restart."""
+        restored = 0
+        for asset in self.assets:
+            try:
+                candles = self.store.load_candles(asset, max_bars=250)
+                if candles:
+                    self.candle_cache[asset] = candles
+                    restored += 1
+            except Exception as e:
+                logger.debug("restore candles %s: %s", asset, e)
+        if restored:
+            logger.info("RESTORED candle cache: %d/%d assets from DB", restored, len(self.assets))
+            # Also rebuild 4h cache from restored data where possible
+            for asset, candles in self.candle_cache.items():
+                if len(candles) >= 200:
+                    try:
+                        self.candle_4h_cache[asset] = self._aggregate_to_4h(candles)
+                    except Exception:
+                        pass
+        else:
+            logger.info("No cached candles found — will fetch fresh from exchange")
+
     def _import_file_intents(self):
         intent_dir = self.data_dir / "intents"
         done_dir = intent_dir / "done"
@@ -263,12 +289,29 @@ class TradingLoop:
                 candles_1h = await hl.fetch_candles(asset, "1h", 250)
                 if candles_1h:
                     self.candle_cache[asset] = candles_1h
+                    try:
+                        self.store.save_candles(asset, candles_1h)
+                    except Exception as e:
+                        logger.debug("save candles %s: %s", asset, e)
                     # Build 4h aggregation for regime detection (NotebookLM round 10)
                     if len(candles_1h) >= 200:
                         self.candle_4h_cache[asset] = self._aggregate_to_4h(candles_1h)
             except Exception as e:
                 logger.debug("fetch candles %s: %s", asset, e)
         await asyncio.gather(*[_fetch_one(a) for a in self.assets])
+
+        # Asset coverage invariant: every asset must have fresh candle data
+        covered = sum(1 for a in self.assets if a in self.candle_cache and len(self.candle_cache[a]) > 0)
+        if covered < len(self.assets):
+            missing = [a for a in self.assets if a not in self.candle_cache or not self.candle_cache[a]]
+            logger.warning("ASSET COVERAGE: %d/%d assets have candles — missing: %s", covered, len(self.assets), missing)
+            self._asset_coverage_warned = True
+            if covered < 20:
+                await self.notifier.send_message(
+                    f"⚠️ ASSET COVERAGE: {covered}/{len(self.assets)} assets active — {missing}"
+                )
+        else:
+            self._asset_coverage_warned = False
 
         # 2a. Kalshi data supplement (parallel, fills gaps)
         self._kalshi_funding = {}

@@ -231,8 +231,7 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
             pid = p.get("product_id", "")
             asset = PRODUCT_TO_ASSET[pid]
             price_str = p.get("price", "0")
-            try:
-                bid_str = p.get("best_bid", "0")
+            bid_str = p.get("best_bid", "0")
             ask_str = p.get("best_ask", "0")
             try:
                 bid = float(bid_str) if bid_str else 0.0
@@ -244,7 +243,8 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
                 if mid > 0:
                     spread_pct = ((ask - bid) / mid) * 100
                     self._latest_spread[asset] = spread_pct
-            price = float(price_str)
+            try:
+                price = float(price_str)
             except (ValueError, TypeError):
                 price = 0.0
             if price > 0:

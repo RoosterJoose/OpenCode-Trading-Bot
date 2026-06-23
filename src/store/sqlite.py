@@ -103,6 +103,17 @@ class Store:
                     applied_at TEXT,
                     impact_notes TEXT NOT NULL DEFAULT ''
                 );
+
+                CREATE TABLE IF NOT EXISTS candles (
+                    asset TEXT NOT NULL,
+                    timestamp REAL NOT NULL,
+                    open REAL,
+                    high REAL,
+                    low REAL,
+                    close REAL,
+                    volume REAL,
+                    PRIMARY KEY (asset, timestamp)
+                );
                 CREATE INDEX IF NOT EXISTS idx_param_changes_status ON parameter_changes(status);
 
                 CREATE INDEX IF NOT EXISTS idx_trades_asset ON trades(asset);
@@ -305,6 +316,45 @@ class Store:
                     "SELECT * FROM parameter_changes ORDER BY created_at DESC LIMIT 50"
                 ).fetchall()
             return [dict(r) for r in rows]
+
+    def save_candles(self, asset: str, candles: list) -> None:
+        with self._lock:
+            for cdl in candles[-300:]:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO candles (asset, timestamp, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (asset, cdl.timestamp, cdl.open, cdl.high, cdl.low, cdl.close, cdl.volume),
+                )
+            self._conn.execute(
+                "DELETE FROM candles WHERE asset = ? AND timestamp NOT IN (SELECT timestamp FROM candles WHERE asset = ? ORDER BY timestamp DESC LIMIT 300)",
+                (asset, asset),
+            )
+            self._conn.commit()
+
+    def load_candles(self, asset: str, max_bars: int = 250) -> list:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM candles WHERE asset = ? ORDER BY timestamp DESC LIMIT ?",
+                (asset, max_bars),
+            ).fetchall()
+            rows = list(reversed(rows))
+            from src.core.types import PerpCandle
+            return [PerpCandle(
+                timestamp=float(r["timestamp"]),
+                open=float(r["open"]),
+                high=float(r["high"]),
+                low=float(r["low"]),
+                close=float(r["close"]),
+                volume=float(r["volume"]),
+            ) for r in rows]
+
+    def candle_asset_count(self, stale_hours: float = 2.0) -> dict:
+        cutoff = datetime.now(timezone.utc).timestamp() - (stale_hours * 3600)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT asset, COUNT(*) as cnt, MAX(timestamp) as latest FROM candles WHERE timestamp > ? GROUP BY asset",
+                (cutoff,),
+            ).fetchall()
+            return {r["asset"]: {"count": r["cnt"], "latest": r["latest"]} for r in rows}
 
     def close(self):
         self._conn.close()
