@@ -93,7 +93,6 @@ class TradingLoop:
         self.candle_cache: dict[str, list[PerpCandle]] = {}
         self.candle_4h_cache: dict[str, list[PerpCandle]] = {}
         self._restore_candle_cache()  # 4h aggregated for regime detection
-        self._assets_with_candles: set[str] = set()
         self._asset_coverage_warned: bool = False
         self.signal_cache: dict[str, list[Signal]] = defaultdict(list)
         self._stop_event = asyncio.Event()
@@ -286,7 +285,7 @@ class TradingLoop:
         # 2. Fetch candles (parallel) — 1h for signals, 4h for regime detection
         async def _fetch_one(asset: str) -> None:
             try:
-                candles_1h = await hl.fetch_candles(asset, "1h", 250)
+                candles_1h = await asyncio.wait_for(hl.fetch_candles(asset, "1h", 250), timeout=30.0)
                 if candles_1h:
                     self.candle_cache[asset] = candles_1h
                     try:
