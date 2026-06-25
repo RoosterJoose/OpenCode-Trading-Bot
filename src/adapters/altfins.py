@@ -64,8 +64,6 @@ VALUE_TYPES = [
     "OBV_TREND",
     "VOLUME_RELATIVE",
     "MACD",
-    "MACD_SIGNAL",
-    "MACD_HISTOGRAM",
     "STOCH",
     "STOCH_RSI",
     "WILLIAMS",
