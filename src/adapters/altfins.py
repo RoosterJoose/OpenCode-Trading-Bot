@@ -71,10 +71,9 @@ VALUE_TYPES = [
     "WILLIAMS",
     "BOLLINGER_BAND_UPPER",
     "BOLLINGER_BAND_LOWER",
+    "ATH_PERCENT_DOWN",
     "SHORT_TERM_TREND_CHANGE",
     "MEDIUM_TERM_TREND_CHANGE",
-    "SUPPORT",
-    "RESISTANCE",
 ]
 
 # NotebookLM-verified Tier 1 signal keys — only these pass through
