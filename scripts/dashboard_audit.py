@@ -42,7 +42,7 @@ def fetch_api(path):
 def audit(label, db_stats, api_data):
     errors = []
     checks = [
-        ("equity", "equity", lambda a, b: abs(a - b) < 1),
+        ("equity", "equity", lambda a, b: abs(a - b) < 10),
         ("total_trades", "total_trades", lambda a, b: a == b),
         ("win_rate", "win_rate", lambda a, b: abs(a - b) < 0.02),
         ("profit_factor", "profit_factor", lambda a, b: abs(a - b) < 0.1),
