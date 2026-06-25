@@ -567,6 +567,8 @@ class TradingLoop:
                 "signal_source": p.signal_source,
                 "entry_confidence": p.entry_confidence,
                 "component_sources": p.component_sources,
+                "regime": getattr(p, "regime", ""),
+                "entry_regime": getattr(p, "entry_regime", ""),
             }
             for p in exchange.positions.values()
         ])
@@ -1060,8 +1062,8 @@ class TradingLoop:
                 "entry_time": pos.entry_time.isoformat(),
                 "exit_time": datetime.now(timezone.utc).isoformat(),
                 "r_multiple": round(r_mult, 3),
-                "regime": pos.regime or "",
-                "entry_regime": pos.entry_regime or pos.regime or "",
+                "regime": getattr(pos, "regime", "") or "",
+                "entry_regime": getattr(pos, "entry_regime", "") or getattr(pos, "regime", "") or "",
             }
             self.store.save_trade(trade)
             # Reduce position size; move stop to breakeven
@@ -1106,8 +1108,8 @@ class TradingLoop:
             "entry_time": pos.entry_time.isoformat(),
             "exit_time": datetime.now(timezone.utc).isoformat(),
             "r_multiple": round(r_mult, 3),
-            "regime": pos.regime or "",
-            "entry_regime": pos.entry_regime or pos.regime or "",
+            "regime": getattr(pos, "regime", "") or "",
+            "entry_regime": getattr(pos, "entry_regime", "") or getattr(pos, "regime", "") or "",
         }
         self.store.save_trade(trade)
 
