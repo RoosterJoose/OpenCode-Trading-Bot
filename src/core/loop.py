@@ -399,31 +399,35 @@ class TradingLoop:
             except Exception as e:
                 logger.debug("kalshi supplement: %s", e)
 
-        # 2b. Altfins: both calls every 90 min (2 permits/cycle = 960/mo within 1,000 budget)
+        # 2b. Altfins: decoupled cadences per NotebookLM
+        #   - Screener (1h/15m): every 5 cycles (5 min) — primary intraday data
+        #   - Signal Feed (1D): every 360 cycles (6h) — daily confirmation only
         self._altfins_cycle += 1
-        if self._altfins and self._altfins_cycle % 90 == 0:
-            try:
-                indicator_sigs = await self._altfins.fetch_indicators_as_signals(self.assets)
-                for sig in indicator_sigs:
-                    existing = self.signal_cache.get(sig.asset, [])
-                    existing = [s for s in existing if s.source != sig.source]
-                    existing.append(sig)
-                    self.signal_cache[sig.asset] = existing[-20:]
-            except Exception as e:
-                logger.warning("Altfins screener: %s", e)
+        if self._altfins:
+            if self._altfins_cycle % 5 == 0:
+                try:
+                    indicator_sigs = await self._altfins.fetch_indicators_as_signals(self.assets)
+                    for sig in indicator_sigs:
+                        existing = self.signal_cache.get(sig.asset, [])
+                        existing = [s for s in existing if s.source != sig.source]
+                        existing.append(sig)
+                        self.signal_cache[sig.asset] = existing[-20:]
+                except Exception as e:
+                    logger.warning("Altfins screener: %s", e)
 
-            try:
-                altfins_sigs = await self._altfins.fetch_signals(self.assets)
-                for sig in altfins_sigs:
-                    existing = self.signal_cache.get(sig.asset, [])
-                    existing = [s for s in existing if s.source != sig.source]
-                    existing.append(sig)
-                    self.signal_cache[sig.asset] = existing[-20:]
-                    logger.info("Altfins signal: %s %s %.2f %s",
-                                 sig.asset, sig.direction.value.upper(),
-                                 sig.confidence, sig.source)
-            except Exception as e:
-                logger.warning("Altfins signals: %s", e)
+            if self._altfins_cycle % 360 == 0:
+                try:
+                    altfins_sigs = await self._altfins.fetch_signals(self.assets)
+                    for sig in altfins_sigs:
+                        existing = self.signal_cache.get(sig.asset, [])
+                        existing = [s for s in existing if s.source != sig.source]
+                        existing.append(sig)
+                        self.signal_cache[sig.asset] = existing[-20:]
+                        logger.info("Altfins signal: %s %s %.2f %s",
+                                     sig.asset, sig.direction.value.upper(),
+                                     sig.confidence, sig.source)
+                except Exception as e:
+                    logger.warning("Altfins signals: %s", e)
 
         # 3. Fetch funding + OI
         try:
