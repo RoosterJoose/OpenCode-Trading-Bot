@@ -35,7 +35,7 @@ class RegressionTests(unittest.TestCase):
     def test_mr_stop_does_not_exit_above_stop(self):
         strat = MeanReversion()
         pos = PerpPosition("BTC", Side.LONG, 100.0, 1.0, stop_loss=98.5, entry_time=datetime.now(timezone.utc))
-        self.assertIsNone(strat.should_exit("BTC", pos, 100.0, candles(), 0.0))
+        self.assertIsNone(strat.should_exit("BTC", pos, 100.0, candles(close=105.0), 0.0))
         self.assertEqual(strat.should_exit("BTC", pos, 98.4, candles(), 0.0)[0], "stop_loss")
 
     def test_paper_order_uses_order_leverage_and_stop(self):

@@ -224,7 +224,7 @@ class PerpRiskManager:
         # BTC correlation penalty: Size *= (1 - |ρ_btc|)
         corr = self.btc_correlation(asset)
         if corr is not None:
-            quantity *= max(0.1, 1.0 - abs(corr))
+            quantity *= max(0.5, 1.0 - abs(corr))
 
         # Linear streak modifier over last 10 trades
         if self._recent_outcomes:

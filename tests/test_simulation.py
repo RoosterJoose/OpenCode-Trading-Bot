@@ -12,6 +12,9 @@ from src.strategies.mr import MeanReversion
 from src.strategies.trend import TrendFollow as TrendFollowStrategy
 
 
+def flat_candles(close: float = 100.0, n: int = 80) -> list[PerpCandle]:
+    return [PerpCandle(i, close, close + 1, close - 1, close, 1_000_000) for i in range(n)]
+
 def downtrend_candles(n: int = 120, start: float = 100.0) -> list[PerpCandle]:
     """Generate downtrend candles with ADX > 50 and bear EMA cross."""
     candles = []
@@ -215,7 +218,7 @@ class SimulationTests(unittest.TestCase):
             "entry_price": 100.0, "entry_time": datetime.now(timezone.utc),
             "stop_loss": 98.0, "side": "short", "strategy": "trend"
         })()
-        self.assertIsNone(mr.should_exit("BTC", pos, 99.0, downtrend_candles(100), 0.0),
+        self.assertIsNone(mr.should_exit("BTC", pos, 99.0, flat_candles(close=105.0, n=80), 0.0),
                           "MR should not exit trend position")
 
     def test_regime_survives_edge_cases(self):

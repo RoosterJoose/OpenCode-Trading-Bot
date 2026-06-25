@@ -231,6 +231,11 @@ class MeanReversion(PerpStrategy):
             "component_sources": component_sources,
         }
 
+    def _sma(self, candles: list, period: int = 20) -> Optional[float]:
+        if len(candles) < period:
+            return None
+        return sum(c.close for c in candles[-period:]) / period
+
     def should_exit(
         self,
         asset: str,
@@ -266,8 +271,14 @@ class MeanReversion(PerpStrategy):
         else:
             r_mult = (current_price - entry) / max(stop_dist, 0.001)
 
-        # NotebookLM scale-out: 50% at 0.5R (tp1), 50% at 2.0R (tp2)
+        # NotebookLM scale-out: dynamic MA-based exit, then 2.0R trailing
         if not self._scaled_out.get(asset, False):
+            sma_20 = self._sma(candles)
+            if sma_20 is not None:
+                if (not is_short and current_price >= sma_20) or (is_short and current_price <= sma_20):
+                    self._scaled_out[asset] = True
+                    return "tp1", current_price
+            # Fallback: if no SMA data, use fixed R-multiple
             if r_mult >= self.tp1_r_mult:
                 self._scaled_out[asset] = True
                 return "tp1", current_price
