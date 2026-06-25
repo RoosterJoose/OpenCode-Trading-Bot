@@ -234,6 +234,60 @@ class TradingLoop:
                     pass
                 logger.debug("intent import %s: %s", f.name, e)
 
+    def _restore_risk_state(self) -> None:
+        try:
+            raw = self.store.get_state("risk_consecutive_losses")
+            if raw:
+                self.risk._consecutive_losses.update(json.loads(raw) if isinstance(raw, str) else raw)
+            raw = self.store.get_state("risk_global_loss_streak")
+            if raw:
+                self.risk._global_loss_streak = int(raw)
+            raw = self.store.get_state("risk_recent_outcomes")
+            if raw:
+                restored = json.loads(raw) if isinstance(raw, str) else raw
+                self.risk._recent_outcomes = list(restored)
+            if self.risk._recent_outcomes or self.risk._consecutive_losses:
+                logger.info(
+                    "Restored risk state: %d outcomes, %d consecutive-loss entries, global streak=%d",
+                    len(self.risk._recent_outcomes),
+                    len(self.risk._consecutive_losses),
+                    self.risk._global_loss_streak,
+                )
+        except Exception as e:
+            logger.debug("restore risk state: %s", e)
+
+    def _save_risk_state(self) -> None:
+        try:
+            self.store.put_state("risk_consecutive_losses", json.dumps(dict(self.risk._consecutive_losses)))
+            self.store.put_state("risk_global_loss_streak", str(self.risk._global_loss_streak))
+            self.store.put_state("risk_recent_outcomes", json.dumps(self.risk._recent_outcomes))
+        except Exception as e:
+            logger.debug("save risk state: %s", e)
+
+    def _restore_strategy_cooldowns(self) -> None:
+        try:
+            raw = self.store.get_state("strategy_cooldowns")
+            if raw:
+                saved = json.loads(raw) if isinstance(raw, str) else raw
+                for strat in self.strategies:
+                    if hasattr(strat, "_cooldowns") and strat.name() in saved:
+                        strat._cooldowns = {
+                            k: v for k, v in saved[strat.name()].items() if v > 0
+                        }
+                logger.info("Restored strategy cooldowns from DB")
+        except Exception as e:
+            logger.debug("restore cooldowns: %s", e)
+
+    def _save_strategy_cooldowns(self) -> None:
+        try:
+            cooldowns = {}
+            for s in self.strategies:
+                if hasattr(s, "_cooldowns"):
+                    cooldowns[s.name()] = dict(s._cooldowns)
+            self.store.put_state("strategy_cooldowns", json.dumps(cooldowns))
+        except Exception as e:
+            logger.debug("save cooldowns: %s", e)
+
     async def _cycle(self, hl: ExchangeAdapter, exchange: PaperPerpExchange):
         if self._cycle_count % 5 == 0:
             logger.info("heartbeat cycle=%d", self._cycle_count)
@@ -270,6 +324,7 @@ class TradingLoop:
                 self._strategy_budget = sb.get("weights", {})
         except Exception as e:
             logger.debug("strategy budget: %s", e)
+        self._restore_strategy_cooldowns()
         self._import_file_intents()
         # 1. Fetch market data
         try:
@@ -484,6 +539,9 @@ class TradingLoop:
         self.store.put_state("paper_peak_equity", str(self.risk.peak_equity))
         await self.notifier.daily_drawdown(eq, self.risk.peak_equity,
             (self.risk.peak_equity - eq) / self.risk.peak_equity * 100 if self.risk.peak_equity > 0 else 0)
+                # Persist risk state + strategy cooldowns (survive restarts)
+        self._save_risk_state()
+        self._save_strategy_cooldowns()
         self.store.put_state("positions", [
             {
                 "asset": p.asset,
@@ -663,8 +721,8 @@ class TradingLoop:
                 "strategy": strat.name(),
                 "side": side.value,
                 "confidence": round(confidence, 3),
-                "entry_price": round(entry_price, 2),
-                "stop_price": round(stop_price, 2),
+                "entry_price": round(entry_price, 6),
+            "stop_price": round(stop_price, 6),
                 "stop_pct": round(stop_pct, 2),
                 "leverage": lev,
                 "lev_reason": lev_reason,

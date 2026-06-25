@@ -275,8 +275,10 @@ class PerpRiskManager:
     def record_trade(self, asset: str, pnl_pct: float, pnl_dollars: float):
         if pnl_pct < 0:
             self._consecutive_losses[asset] += 1
+            self._global_loss_streak += 1
         else:
             self._consecutive_losses[asset] = 0
+            self._global_loss_streak = 0
         self._trade_pnls.append(pnl_pct)
         self._total_trades += 1
         self._recent_outcomes.append(pnl_pct > 0)
