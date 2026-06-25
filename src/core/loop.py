@@ -148,6 +148,12 @@ class TradingLoop:
             logger.info("Altfins: enabled")
         else:
             logger.info("Altfins: disabled (no API key)")
+        try:
+            saved_ac = self.store.get_state("altfins_cycle")
+            if saved_ac:
+                self._altfins_cycle = int(saved_ac)
+        except Exception:
+            pass
 
         kalshi_key_id = self.config.get("kalshi", {}).get("api_key_id", "")
         kalshi_pk = self.config.get("kalshi", {}).get("private_key", "") or os.environ.get("KALSHI_PRIVATE_KEY", "")
@@ -543,6 +549,7 @@ class TradingLoop:
                 # Persist risk state + strategy cooldowns (survive restarts)
         self._save_risk_state()
         self._save_strategy_cooldowns()
+        self.store.put_state("altfins_cycle", str(self._altfins_cycle))
         self.store.put_state("positions", [
             {
                 "asset": p.asset,
@@ -767,7 +774,7 @@ class TradingLoop:
                     asset, side.value.upper(), entry_price, qty, lev, confidence, strat.name(),
                 ))
                 logger.info(
-                    "PAPER %s %s qty=%.4f @ %.2f stop=%.2f lev=%.1fx risk=$%.0f conf=%.2f altfins=%d",
+                    "PAPER %s %s qty=%.4f @ %g stop=%g lev=%.1fx risk=$%.0f conf=%.2f altfins=%d",
                     side.value.upper(), asset, qty, entry_price, stop_price, lev,
                     risk_dollars, confidence,
                     len(altfins_sigs),
