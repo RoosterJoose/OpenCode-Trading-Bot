@@ -271,7 +271,7 @@ class AltfinsAdapter:
 
             # === RSI ===
             rsi14 = data.get("RSI14")
-            if rsi14 is not None:
+            if isinstance(rsi14, (int, float)):
                 if rsi14 <= 28:
                     conf = max(0.5, 1.0 - (rsi14 / 56))
                     signals.append(Signal(
@@ -291,14 +291,14 @@ class AltfinsAdapter:
 
             # RSI 9 — faster oversold/overbought
             rsi9 = data.get("RSI9")
-            if rsi9 is not None and rsi9 <= 25:
+            if isinstance(rsi9, (int, float)) and rsi9 <= 25:
                 signals.append(Signal(
                     source="altfins:rsi9_oversold",
                     asset=asset, direction=Side.LONG, confidence=0.55,
                     timestamp=now_utc, bucket="altfins_indicator",
                     metadata={"rsi9": rsi9},
                 ))
-            elif rsi9 is not None and rsi9 >= 75:
+            elif isinstance(rsi9, (int, float)) and rsi9 >= 75:
                 signals.append(Signal(
                     source="altfins:rsi9_overbought",
                     asset=asset, direction=Side.SHORT, confidence=0.55,
@@ -308,7 +308,7 @@ class AltfinsAdapter:
 
             # === STOCH ===
             stoch = data.get("STOCH")
-            if stoch is not None:
+            if isinstance(stoch, (int, float)):
                 if stoch <= 20:
                     signals.append(Signal(
                         source="altfins:stoch_oversold",
@@ -326,7 +326,7 @@ class AltfinsAdapter:
 
             # === WILLIAMS %R ===
             williams = data.get("WILLIAMS")
-            if williams is not None:
+            if isinstance(williams, (int, float)):
                 if williams <= -80:
                     signals.append(Signal(
                         source="altfins:williams_oversold",
@@ -381,7 +381,7 @@ class AltfinsAdapter:
             macd_hist = data.get("MACD_HISTOGRAM")
             macd_line = data.get("MACD")
             macd_signal = data.get("MACD_SIGNAL_LINE")
-            if macd_hist is not None and macd_line is not None and macd_signal is not None:
+            if isinstance(macd_hist, (int, float)) and isinstance(macd_line, (int, float)) and isinstance(macd_signal, (int, float)):
                 # Histogram rising = bullish momentum
                 prev_hist = self._cached_indicators.get(asset, {}).get("MACD_HISTOGRAM", macd_hist)
                 if isinstance(prev_hist, (int, float)) and isinstance(macd_hist, (int, float)):
@@ -407,14 +407,14 @@ class AltfinsAdapter:
             bb_upper = data.get("BOLLINGER_BAND_UPPER")
             bb_lower = data.get("BOLLINGER_BAND_LOWER")
             price = data.get("LAST_PRICE") or 0
-            if bb_upper is not None and price > 0 and price >= bb_upper:
+            if isinstance(bb_upper, (int, float)) and isinstance(price, (int, float)) and price > 0 and price >= bb_upper:
                 signals.append(Signal(
                     source="altfins:bollinger_touch_upper",
                     asset=asset, direction=Side.SHORT, confidence=0.5,
                     timestamp=now_utc, bucket="altfins_indicator",
                     metadata={"price": price, "bb_upper": bb_upper},
                 ))
-            if bb_lower is not None and price > 0 and price <= bb_lower:
+            if isinstance(bb_lower, (int, float)) and isinstance(price, (int, float)) and price > 0 and price <= bb_lower:
                 signals.append(Signal(
                     source="altfins:bollinger_touch_lower",
                     asset=asset, direction=Side.LONG, confidence=0.5,
@@ -424,7 +424,7 @@ class AltfinsAdapter:
 
             # === ATR VOLATILITY REGIME ===
             tr_vs_atr = data.get("TR_VS_ATR")
-            if tr_vs_atr is not None and tr_vs_atr > 0:
+            if isinstance(tr_vs_atr, (int, float)) and tr_vs_atr > 0:
                 if tr_vs_atr >= 3.0:
                     signals.append(Signal(
                         source="altfins:volatility_high",
@@ -436,7 +436,7 @@ class AltfinsAdapter:
             # === VOLUME CONFIRMATION ===
             rvol = data.get("VOLUME_RELATIVE")
             obv = data.get("OBV_TREND")
-            if rvol is not None and rvol >= 1.5 and isinstance(obv, str):
+            if isinstance(rvol, (int, float)) and rvol >= 1.5 and isinstance(obv, str):
                 if "UP" in obv:
                     signals.append(Signal(
                         source="altfins:volume_breakout_bullish",
@@ -454,7 +454,7 @@ class AltfinsAdapter:
 
             # === ATH DISTANCE (risk metric) ===
             ath_down = data.get("ATH_PERCENT_DOWN")
-            if ath_down is not None and ath_down <= 5:
+            if isinstance(ath_down, (int, float)) and ath_down <= 5:
                 signals.append(Signal(
                     source="altfins:near_ath",
                     asset=asset, direction=Side.SHORT, confidence=0.4,
