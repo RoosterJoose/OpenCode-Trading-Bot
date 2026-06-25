@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 class CrossSectionalMomentum(PerpStrategy):
     # Class-level state shared across instances to enable ranking
+    _downtrend_override: bool = False
     _asset_returns_7d: dict[str, float] = {}  # {asset: 7d return}
 
     def __init__(
@@ -113,14 +114,14 @@ class CrossSectionalMomentum(PerpStrategy):
         drift = self._asset_drift(candles)
         if is_long and drift == "bearish_drift":
             return None
-        if not is_long and drift == "bullish_drift":
+        if not is_long and drift == "bullish_drift" and not CrossSectionalMomentum._downtrend_override:
             return None
 
         # RSI check
         rsi = self._rsi(candles, 14)
         if is_long and rsi > 75:
             return None
-        if not is_long and rsi < 25:
+        if not is_long and rsi < 25 and not CrossSectionalMomentum._downtrend_override:
             return None
 
         # EMA50 divergence
@@ -128,7 +129,7 @@ class CrossSectionalMomentum(PerpStrategy):
         if ema50 is not None and ema50 > 0:
             divergence = (last.close - ema50) / ema50
             if divergence > 0.05 and not is_long:
-                return None
+                    return None
             if divergence < -0.05 and is_long:
                 return None
 
@@ -139,7 +140,7 @@ class CrossSectionalMomentum(PerpStrategy):
             return None
 
         # Confidence: scale by rank extremity and return magnitude
-        rank = top_assets.index(asset) + 1 if is_long else len(sorted_assets) - bottom_assets.index(asset)
+        rank = top_assets.index(asset) + 1 if is_long else bottom_assets.index(asset) + 1
         rank_factor = 1.0 - (rank - 1) * 0.1  # rank 1 = 1.0, rank 3 = 0.8
         magnitude_factor = min(abs(ret_7d) / 0.05, 2.0)  # 5% move = 1.0, 10% = 2.0
         confidence = 0.55 * rank_factor * magnitude_factor

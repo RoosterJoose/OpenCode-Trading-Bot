@@ -282,21 +282,27 @@ class TradingLoop:
         except Exception as e:
             logger.debug("fetch mids: %s", e)
 
-        # 2. Fetch candles (parallel) — 1h for signals, 4h for regime detection
+        # 2. Fetch candles (parallel with semaphore) — 1h for signals, 4h for regime detection
+        _candle_sema = asyncio.Semaphore(5)
         async def _fetch_one(asset: str) -> None:
-            try:
-                candles_1h = await asyncio.wait_for(hl.fetch_candles(asset, "1h", 250), timeout=30.0)
-                if candles_1h:
-                    self.candle_cache[asset] = candles_1h
-                    try:
-                        self.store.save_candles(asset, candles_1h)
-                    except Exception as e:
-                        logger.debug("save candles %s: %s", asset, e)
-                    # Build 4h aggregation for regime detection (NotebookLM round 10)
-                    if len(candles_1h) >= 200:
-                        self.candle_4h_cache[asset] = self._aggregate_to_4h(candles_1h)
-            except Exception as e:
-                logger.debug("fetch candles %s: %s", asset, e)
+            async with _candle_sema:
+                try:
+                    candles_1h = await asyncio.wait_for(hl.fetch_candles(asset, "1h", 250), timeout=30.0)
+                    if candles_1h:
+                        self.candle_cache[asset] = candles_1h
+                        try:
+                            self.store.save_candles(asset, candles_1h)
+                        except Exception as e:
+                            logger.debug("save candles %s: %s", asset, e)
+                        # Build 4h aggregation for regime detection (NotebookLM round 10)
+                        if len(candles_1h) >= 200:
+                            self.candle_4h_cache[asset] = self._aggregate_to_4h(candles_1h)
+                    else:
+                        logger.warning("candle fetch %s: empty response", asset)
+                except asyncio.TimeoutError:
+                    logger.warning("candle fetch %s: timeout after 30s", asset)
+                except Exception as e:
+                    logger.warning("candle fetch %s: %s", asset, e)
         await asyncio.gather(*[_fetch_one(a) for a in self.assets])
 
         # Asset coverage invariant: every asset must have fresh candle data
@@ -433,8 +439,22 @@ class TradingLoop:
                     xs_returns[asset] = ret
             if xs_returns:
                 CrossSectionalMomentum.set_returns(xs_returns)
+                CrossSectionalMomentum._downtrend_override = self._btc_knife_block
         except Exception as e:
             logger.debug("xs returns: %s", e)
+
+        # 5a. BTC falling-knife guard (once per cycle)
+        btc_candles = self.candle_cache.get("BTC", [])
+        self._btc_knife_block = False
+        if len(btc_candles) >= 60:
+            btc_adx = TradingLoop._adx(btc_candles)
+            btc_closes = [c.close for c in btc_candles]
+            btc_ema50 = TradingLoop._ema(btc_closes, 50)
+            btc_price = btc_closes[-1]
+            if btc_adx > 28 and btc_price < btc_ema50:
+                self._btc_knife_block = True
+                logger.info("BTC knife guard: ADX=%.1f price=%.0f < EMA50=%.0f",
+                             btc_adx, btc_price, btc_ema50)
 
         # 5. Process each asset
         for asset in self.assets:
@@ -589,6 +609,12 @@ class TradingLoop:
             if confidence < MIN_ENTRY_CONFIDENCE:
                 continue
 
+            # BTC falling-knife guard: block ALL longs during strong BTC downtrend
+            if self._btc_knife_block and side == Side.LONG:
+                logger.debug("%s %s: blocked by BTC falling-knife guard (longs blocked)",
+                             strat.name(), asset)
+                continue
+
             # Leverage + stop sizing
             lev, lev_reason = self.risk.compute_leverage(asset, candles, side)
             stop_pct, stop_reason = self.risk.compute_stop_distance(asset, candles)
@@ -608,7 +634,6 @@ class TradingLoop:
             strat_name = strat.name()
             budget_weight = self._strategy_budget.get(strat_name, 1.0)
             if budget_weight <= 0:
-                logger.debug("%s %s: budget={budget_weight} — skipping", strat_name, asset)
                 continue
             if budget_weight < 1.0:
                 qty = qty * budget_weight
@@ -654,6 +679,9 @@ class TradingLoop:
             self.store.put_state(f"last_signal_{asset}", signal_entry)
 
             # Execute paper trade
+            if strat.name() == "mr" or strat.name() == "donchian":
+                logger.info("ENTRY_ATTEMPT %s %s conf=%.2f qty=%.4f stop=%.2f entry=%.2f",
+                             asset, side.value, confidence, qty, stop_price, entry_price)
             order = Order(
                 asset=asset,
                 side=side,

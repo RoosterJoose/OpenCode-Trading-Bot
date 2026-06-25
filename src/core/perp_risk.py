@@ -58,7 +58,7 @@ class PerpRiskManager:
         self.last_reset_date = date.today()
         self.highest_dd: float = 0.0
         self.daily_pnl: float = 0.0
-        self.max_concurrent_positions: int = 3
+        self.max_concurrent_positions: int = 5
         self._consecutive_losses: dict[str, int] = defaultdict(int)
         self._oi_history: dict[str, list[tuple[int, float]]] = defaultdict(list)
         self._trade_pnls: list[float] = []
