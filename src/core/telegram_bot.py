@@ -14,6 +14,7 @@ import json
 import logging
 import time
 import asyncio
+import sqlite3
 from datetime import datetime, timezone
 
 import httpx
@@ -94,6 +95,8 @@ class TelegramBot:
                 await self._cmd_resume()
             elif cmd == "/help":
                 await self._cmd_help()
+            elif cmd in ("/balance", "/bal"):
+                await self._cmd_balance()
             else:
                 await self._send("Unknown command. Try /help")
         except Exception as e:
@@ -163,12 +166,37 @@ class TelegramBot:
         logger.warning("TelegramBot: manual resume via /resume")
         await self._send("Bot resumed.")
 
+    async def _cmd_balance(self):
+        eq = self.store.get_state("paper_equity") or "0"
+        peak = self.store.get_state("paper_peak_equity") or "0"
+        try:
+            eq_f = float(eq)
+            peak_f = float(peak)
+            dd = (peak_f - eq_f) / peak_f * 100 if peak_f > 0 else 0
+        except (ValueError, TypeError):
+            eq_f = 0; dd = 0
+
+        # Aggressive bot
+        agg_eq = "?"
+        try:
+            c = sqlite3.connect("/opt/hermes-trading-bot-aggressive/data_aggressive/hermes.db")
+            raw = c.execute("SELECT value FROM state WHERE key='paper_equity'").fetchone()
+            if raw:
+                agg_eq = f"${float(raw[0].strip(chr(34))):.2f}"
+            c.close()
+        except Exception as e:
+            agg_eq = f"error: {e}"
+
+        msg = 'Conservative: ${:.2f} (DD {:.1f}%)\nAggressive: {}'.format(eq_f, dd, agg_eq)
+        await self._send(msg)
+
     async def _cmd_help(self):
         await self._send(
             "/status — equity, drawdown, positions\n"
             "/positions — open positions with PnL\n"
             "/pause — pause trading immediately\n"
             "/resume — resume trading\n"
+            "/balance — see both bot balances\n"
             "/help — this message"
         )
 
