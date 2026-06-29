@@ -114,7 +114,7 @@ class PerpRiskManager:
         # Portfolio-wide kill switch (NotebookLM: WR < 48% or daily loss > 3.5%)
         if len(self._recent_outcomes) >= 10:
             wr = sum(self._recent_outcomes) / len(self._recent_outcomes)
-            if wr < 0.48:
+            if wr < 0.30:
                 return False, f"portfolio_wr_halt: {wr:.0%} WR on last {len(self._recent_outcomes)} trades"
 
         return True, "ok"

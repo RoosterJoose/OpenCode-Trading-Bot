@@ -107,6 +107,7 @@ class TradingLoop:
         chat_id = self.config.get("telegram", {}).get("chat_id") or os.environ.get("HERMES_TELEGRAM_CHAT_ID", "")
         self.telegram = TelegramBot(token, chat_id, self.store)
         self.notifier = self.telegram
+        self._sent_alerts: dict[str, float] = {}  # rate-limit alerts (key -> timestamp)
 
     def _restore_paper_positions(self, exchange: PaperPerpExchange):
         positions = self.store.get_state("positions") or []
@@ -295,6 +296,13 @@ class TradingLoop:
         except Exception as e:
             logger.debug("save cooldowns: %s", e)
 
+    def _send_alert_ratelimited(self, key: str, message: str, min_interval: float = 3600.0) -> None:
+        now = time.time()
+        last = self._sent_alerts.get(key, 0.0)
+        if now - last >= min_interval:
+            self._sent_alerts[key] = now
+            asyncio.ensure_future(self.notifier.send_message(message))
+
     async def _cycle(self, hl: ExchangeAdapter, exchange: PaperPerpExchange):
         if self._cycle_count % 5 == 0:
             logger.info("heartbeat cycle=%d", self._cycle_count)
@@ -302,9 +310,9 @@ class TradingLoop:
         try:
             paused = self.store.get_state("bot_paused")
             if paused == "true":
-                if self._cycle_count % 60 == 0:  # log once per hour
-                    reasons = self.store.get_state("pause_reasons") or "[]"
-                    logger.warning("BOT PAUSED by auto-pause logic: %s", reasons)
+                reasons = self.store.get_state("pause_reasons") or "[]"
+                logger.warning("BOT PAUSED by auto-pause logic: %s", reasons)
+                self._send_alert_ratelimited("bot_paused", f"⚠️ BOT PAUSED: {reasons}", 7200.0)
                 return
         except Exception as e:
             logger.debug("pause check failed: %s", e)
@@ -532,6 +540,15 @@ class TradingLoop:
             except Exception as e:
                 logger.exception("asset %s: %s", asset, e)
 
+                # Cycle summary every 5 cycles
+        if self._cycle_count % 5 == 0:
+            logger.info('CYCLE_SUMMARY cycle=%d equity=$%.0f positions=%d altfins=%s knife=%s',
+                         self._cycle_count,
+                         exchange.equity if hasattr(exchange, 'equity') else 0,
+                         len(exchange.positions),
+                         'dead(429)' if self._altfins_cycle > 0 and not self._altfins else 'ok',
+                         self._btc_knife_block)
+
         # 6. Daily signal journal
         if self._daily_signals_log:
             self.store.put_state("daily_signals", self._daily_signals_log[-500:])
@@ -638,20 +655,26 @@ class TradingLoop:
         # Check risk gates (primary regime influences risk budget)
         risk_ok, risk_msg = self.risk.allow_entry(exchange.gross_exposure, exchange.effective_leverage)
         if not risk_ok:
+            logger.info("ENTRY_DIAG %s: skip -- risk: %s", asset, risk_msg)
+            if "wr_halt" in risk_msg or "daily_loss" in risk_msg or "loss_streak" in risk_msg:
+                self._send_alert_ratelimited("risk_halt", f"⚠️ RISK HALT: {risk_msg}", 3600.0)
             return
 
         oi_ok, oi_msg = self.risk.oi_gate_allows(asset)
         if not oi_ok:
+            logger.info("ENTRY_DIAG %s: skip -- OI: %s", asset, oi_msg)
             return
 
         # Bid-ask spread micro-filter (NotebookLM: block if > 0.08%)
         spread_pct = hl.get_spread(asset)
         spread_ok, spread_msg = self.risk.spread_gate_allows(asset, spread_pct)
         if not spread_ok:
+            logger.info("ENTRY_DIAG %s: skip -- spread: %s", asset, spread_msg)
             return
 
         funding_ok, funding_msg = self.risk.funding_gate(funding_rate)
         if not funding_ok:
+            logger.info("ENTRY_DIAG %s: skip -- funding: %s", asset, funding_msg)
             return
 
         cl_ok, cl_msg = self.risk.consecutive_loss_allows(asset)
@@ -822,13 +845,16 @@ class TradingLoop:
 
         risk_ok, risk_msg = self.risk.allow_entry(exchange.gross_exposure, exchange.effective_leverage)
         if not risk_ok:
+            logger.info("ENTRY_DIAG %s: skip -- risk: %s", asset, risk_msg)
             return False, risk_msg
         oi_ok, oi_msg = self.risk.oi_gate_allows(intent.asset)
         if not oi_ok:
+            logger.info("ENTRY_DIAG %s: skip -- OI: %s", asset, oi_msg)
             return False, oi_msg
         funding_rate = await hl.get_funding_rate(intent.asset)
         funding_ok, funding_msg = self.risk.funding_gate(funding_rate)
         if not funding_ok:
+            logger.info("ENTRY_DIAG %s: skip -- funding: %s", asset, funding_msg)
             return False, funding_msg
 
         stop_price = intent.requested_stop_price
