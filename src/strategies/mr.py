@@ -283,6 +283,31 @@ class MeanReversion(PerpStrategy):
                 self._scaled_out[asset] = True
                 return "tp1", current_price
         else:
+            # After TP1: chandelier trailing stop replaces fixed stop
+            atr = self._atr(candles)
+            if atr > 0:
+                chandelier_mult = 3.0
+                atr_dist = atr * chandelier_mult
+                min_dist = 0.015 * current_price
+                max_dist = 0.04 * current_price
+                stop_dist = max(min_dist, min(max_dist, atr_dist))
+                since_entry = [c for c in candles if isinstance(c.timestamp, (int, float)) or hasattr(c, 'timestamp')]
+                if isinstance(candles[0].timestamp, (int, float)):
+                    since_entry = [c for c in candles if c.timestamp >= position.entry_time.timestamp()]
+                if not since_entry:
+                    since_entry = [candles[-1]]
+                if is_short:
+                    anchor = min(c.low for c in since_entry)
+                    chandelier = anchor + stop_dist
+                    if current_price >= chandelier:
+                        self._cooldowns[asset] = self.cooldown_bars
+                        return "chandelier", current_price
+                else:
+                    anchor = max(c.high for c in since_entry)
+                    chandelier = anchor - stop_dist
+                    if current_price <= chandelier:
+                        self._cooldowns[asset] = self.cooldown_bars
+                        return "chandelier", current_price
             if r_mult >= self.tp2_r_mult:
                 self._cooldowns[asset] = self.cooldown_bars
                 return "tp2", current_price
