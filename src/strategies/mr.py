@@ -177,34 +177,7 @@ class MeanReversion(PerpStrategy):
 
         component_sources = [f"local:{tag}"]
 
-        # Altfins signal validation
-        altfins_confirm = False
-        for s in signals:
-            if s.asset != asset:
-                continue
-            if is_long and s.direction != Side.LONG:
-                continue
-            if not is_long and s.direction != Side.SHORT:
-                continue
-            if s.source.startswith("altfins:"):
-                source_l = s.source.lower()
-                if is_long and any(kw in source_l for kw in ("oversold", "pullback", "bollinger_touch_lower")):
-                    sig_weight = self.signal_tracker.weight(s.source) if self.signal_tracker else 0.5
-                    has_history = self.signal_tracker.accuracy(s.source) is not None if self.signal_tracker else False
-                    if sig_weight > 0 and has_history:
-                        altfins_confirm = True
-                        component_sources.append(s.source)
-                        sources.append(s.source.replace("altfins:", "") + f"_{sig_weight:.2f}")
-                elif not is_long and any(kw in source_l for kw in ("overbought", "bollinger_touch_upper", "resistance", "exhaustion")):
-                    sig_weight = self.signal_tracker.weight(s.source) if self.signal_tracker else 0.5
-                    has_history = self.signal_tracker.accuracy(s.source) is not None if self.signal_tracker else False
-                    if sig_weight > 0 and has_history:
-                        altfins_confirm = True
-                        component_sources.append(s.source)
-                        sources.append(s.source.replace("altfins:", "") + f"_{sig_weight:.2f}")
-        if altfins_confirm:
-            confidence = min(confidence * 1.2, 0.95)
-            sources.append("altfins_validated")
+
 
         if is_long and funding_rate < -self.funding_threshold:
             confidence += 0.15
