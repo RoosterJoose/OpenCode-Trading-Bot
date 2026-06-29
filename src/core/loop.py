@@ -618,6 +618,18 @@ class TradingLoop:
         oi_vel = self.risk.oi_velocity(asset)
         altfins_sigs = self.signal_cache.get(asset, [])
 
+        # Track MAE: Maximum Adverse Excursion (price % against entry)
+        if pos and not getattr(pos, 'mae_pct', None):
+            pos.mae_pct = 0.0
+        if pos:
+            if pos.side == Side.LONG:
+                worst = pos.entry_price - price
+            else:
+                worst = price - pos.entry_price
+            current_mae = worst / pos.entry_price * 100 if pos.entry_price > 0 else 0
+            if current_mae > (getattr(pos, 'mae_pct', 0) or 0):
+                pos.mae_pct = current_mae
+
         if pos and exchange.check_liquidation(asset):
             logger.warning("%s liquidated", asset)
             return
@@ -1092,6 +1104,7 @@ class TradingLoop:
                 "entry_time": pos.entry_time.isoformat(),
                 "exit_time": datetime.now(timezone.utc).isoformat(),
                 "r_multiple": round(r_mult, 3),
+                "mae_pct": round(getattr(pos, 'mae_pct', 0.0), 2),
                 "regime": getattr(pos, "regime", "") or "",
                 "entry_regime": getattr(pos, "entry_regime", "") or getattr(pos, "regime", "") or "",
             }
@@ -1138,6 +1151,7 @@ class TradingLoop:
             "entry_time": pos.entry_time.isoformat(),
             "exit_time": datetime.now(timezone.utc).isoformat(),
             "r_multiple": round(r_mult, 3),
+            "mae_pct": round(getattr(pos, 'mae_pct', 0.0), 2),
             "regime": getattr(pos, "regime", "") or "",
             "entry_regime": getattr(pos, "entry_regime", "") or getattr(pos, "regime", "") or "",
         }

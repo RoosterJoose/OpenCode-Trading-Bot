@@ -73,7 +73,7 @@ class MeanReversion(PerpStrategy):
         if last.volume * last.close < vol_min:
             return None
 
-        if regime in (RegimeType.STRONGLY_TRENDING, RegimeType.HIGH_VOL):
+        if regime in (RegimeType.STRONGLY_TRENDING, RegimeType.TRENDING, RegimeType.HIGH_VOL):
             return None
 
         # Microstructure filters (NotebookLM: Hurst stability, VR test, autocorrelation)
