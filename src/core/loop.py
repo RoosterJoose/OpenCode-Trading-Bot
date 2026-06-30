@@ -634,6 +634,13 @@ class TradingLoop:
             logger.warning("%s liquidated", asset)
             return
 
+        # Emergency close_all check
+        if self.store.get_state("close_all_pending") == '"true"' and pos and price > 0:
+            logger.warning("CLOSE_ALL: closing %s %s at %.2f", asset, pos.side.value, price)
+            await self._close(asset, pos, price, "close_all", exchange)
+            self.store.put_state("close_all_pending", '"false"')
+            return
+
         # Check exits first
         if pos and price > 0:
             if not pos.strategy:

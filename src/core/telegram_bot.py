@@ -97,6 +97,8 @@ class TelegramBot:
                 await self._cmd_help()
             elif cmd in ("/balance", "/bal"):
                 await self._cmd_balance()
+            elif cmd == "/close_all":
+                await self._cmd_close_all()
             else:
                 await self._send("Unknown command. Try /help")
         except Exception as e:
@@ -190,6 +192,15 @@ class TelegramBot:
         msg = 'Conservative: ${:.2f} (DD {:.1f}%)\nAggressive: {}'.format(eq_f, dd, agg_eq)
         await self._send(msg)
 
+    async def _cmd_close_all(self):
+        positions = self.store.get_state("positions") or []
+        if not positions:
+            await self._send("No open positions to close")
+            return
+        self.store.put_state("close_all_pending", '"true"')
+        logger.warning("TelegramBot: /close_all — marking %d positions for close", len(positions))
+        await self._send(f"Close all pending for {len(positions)} positions. Bot will close them on next cycle.")
+
     async def _cmd_help(self):
         await self._send(
             "/status — equity, drawdown, positions\n"
@@ -197,6 +208,7 @@ class TelegramBot:
             "/pause — pause trading immediately\n"
             "/resume — resume trading\n"
             "/balance — see both bot balances\n"
+            "/close_all — emergency close all positions\n"
             "/help — this message"
         )
 
