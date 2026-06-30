@@ -447,9 +447,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         try:
             conn = sqlite3.connect(str(db_path), timeout=5.0, check_same_thread=False)
             conn.row_factory = sqlite3.Row
-            row = conn.execute("SELECT equity FROM equity_snapshots ORDER BY id DESC LIMIT 1").fetchone()
+            row = conn.execute("SELECT value FROM state WHERE key='paper_equity'").fetchone()
             if row:
-                stats["equity"] = round(row["equity"], 2)
+                stats["equity"] = round(float(row[0].strip('"')), 2)
             rows = conn.execute("SELECT pnl_dollars FROM trades").fetchall()
             trades = [dict(r) for r in rows]
             stats["total_trades"] = len(trades)
