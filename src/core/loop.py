@@ -721,7 +721,10 @@ class TradingLoop:
 
             side, confidence, meta = result
             if confidence < MIN_ENTRY_CONFIDENCE:
-                continue
+                # MR sleeve can use lower threshold (0.55) while trend stays at 0.70
+                mr_min = 0.55
+                if confidence < mr_min or strat.name() != "mr":
+                    continue
 
             # BTC falling-knife guard: block ALL longs during strong BTC downtrend
             if self._btc_knife_block and side == Side.LONG:
