@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import math
+import statistics
 import os
 import signal as sig
 from collections import defaultdict
@@ -99,6 +100,7 @@ class TradingLoop:
         self._suggested_params: list[dict] = []
         self._daily_signals_log: list[dict] = []
         self._altfins_cycle = 0
+        self._cusum: dict[str, dict] = {}  # per-asset CUSUM state: {"S_high": 0, "S_low": 0, "mean": 0, "std": 1, "n": 0}
         self._altfins = None
         self._kalshi = None
         self._kalshi_funding = {}
@@ -666,11 +668,11 @@ class TradingLoop:
         # 1h Hurst only covers 2 days; 4h covers 8 days — matches trend timeframe
         candles_4h = self.candle_4h_cache.get(asset, [])
         if len(candles_4h) >= 30:
-            primary_regime = self._infer_regime(candles_4h, 30)
-            regime = self._infer_regime(candles_4h, 30)
+            primary_regime = self._infer_regime(asset, candles_4h, 30)
+            regime = self._infer_regime(asset, candles_4h, 30)
         else:
-            primary_regime = self._infer_regime(candles, 50)
-            regime = self._infer_regime(candles, 30)
+            primary_regime = self._infer_regime(asset, candles, 50)
+            regime = self._infer_regime(asset, candles, 30)
 
         # Dead market — skip entries entirely
         if regime == RegimeType.DEAD_MARKET and not pos:
@@ -960,8 +962,7 @@ class TradingLoop:
             out.append(PerpCandle(open=o, high=h, low=l, close=c, volume=v, timestamp=ts))
         return out
 
-    @staticmethod
-    def _infer_regime(candles: list[PerpCandle], max_lookback: int = 50) -> RegimeType:
+    def _infer_regime(self, asset: str, candles: list[PerpCandle], max_lookback: int = 50) -> RegimeType:
         if len(candles) < max_lookback:
             max_lookback = len(candles)
         if max_lookback < 30:
@@ -980,30 +981,56 @@ class TradingLoop:
 
         if norm_vol < 0.0015:
             return RegimeType.DEAD_MARKET
-
-        # Regime Stack: ADX first (direction), vol modifies (confidence)
-        # High-vol trending -> Trend/Donchian tradeable (scaled risk)
-        # High-vol choppy -> blocked for all strategies
-        adx_val = TradingLoop._adx(candles)
-
         if norm_vol > 0.03:
-            if adx_val > 25:
-                return RegimeType.STRONGLY_TRENDING
             return RegimeType.HIGH_VOL
 
-        # Normal volatility: standard ADX/EMA classification
-        if adx_val > 35:
+        # CUSUM regime detection (replaces ADX as primary — less lag)
+        # Standardized log-returns with EWMA mean/std, drift target delta=1, k=0.5, decision h=4
+        log_rets = []
+        for i in range(1, len(closes)):
+            if closes[i-1] > 0:
+                log_rets.append(math.log(closes[i] / closes[i-1]))
+
+        if len(log_rets) < 10:
+            return RegimeType.RANDOM_WALK
+
+        # Running EWMA mean and std of log returns
+        key = f"{asset}_cr_{max_lookback}"
+        s = self._cusum.get(key, {"S_high": 0, "S_low": 0, "mean": None, "std": None})
+
+        if s["mean"] is None:
+            recent = log_rets[-min(30, len(log_rets)):]
+            s["mean"] = max(sum(recent) / len(recent), -0.01)
+            s["mean"] = min(s["mean"], 0.01)
+            s["std"] = max(statistics.stdev(recent) if len(recent) >= 3 else 0.01, 0.0001)
+
+        decay = 0.9
+        for r in log_rets[-1:]:
+            s["mean"] = decay * s["mean"] + (1 - decay) * r
+            s["std"] = decay * s["std"] + (1 - decay) * abs(r - s["mean"])
+            if s["std"] < 0.0001:
+                s["std"] = 0.01
+
+        k_val = 0.5
+        h_val = 4.0
+        Z = (log_rets[-1] - s["mean"]) / s["std"] if s["std"] > 0 else 0
+
+        s["S_high"] = max(0, s["S_high"] + Z - k_val)
+        s["S_low"] = max(0, s["S_low"] - Z - k_val)
+
+        self._cusum[key] = s
+
+        if s["S_high"] > h_val * 2:
+            s["S_high"] = 0; s["S_low"] = 0
             return RegimeType.STRONGLY_TRENDING
-        if adx_val > 25:
+        if s["S_low"] > h_val * 2:
+            s["S_high"] = 0; s["S_low"] = 0
+            return RegimeType.STRONGLY_TRENDING
+        if s["S_high"] > h_val:
+            return RegimeType.TRENDING
+        if s["S_low"] > h_val:
             return RegimeType.TRENDING
 
-        # EMA slope as fallback trend detector (catches trends ADX misses)
-        fast_ema = TradingLoop._ema(closes, 9)
-        slow_ema = TradingLoop._ema(closes, 21)
-        if slow_ema > 0:
-            ema_slope = (fast_ema - slow_ema) / slow_ema
-            if abs(ema_slope) > 0.005:
-                return RegimeType.TRENDING
         return RegimeType.RANDOM_WALK
 
     @staticmethod
