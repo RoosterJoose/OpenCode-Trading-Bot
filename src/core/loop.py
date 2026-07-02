@@ -998,18 +998,16 @@ class TradingLoop:
 
         if s["mean"] is None:
             recent = log_rets[-min(30, len(log_rets)):]
-            s["mean"] = max(sum(recent) / len(recent), -0.01)
-            s["mean"] = min(s["mean"], 0.01)
-            s["std"] = max(statistics.stdev(recent) if len(recent) >= 3 else 0.01, 0.0001)
+            s["mean"] = sum(recent) / len(recent) if recent else 0
+            s["std"] = max(statistics.stdev(recent) if len(recent) >= 3 else 0.01, 0.005)
 
-        decay = 0.9
+        decay = 0.99
         for r in log_rets[-1:]:
             s["mean"] = decay * s["mean"] + (1 - decay) * r
-            s["std"] = decay * s["std"] + (1 - decay) * abs(r - s["mean"])
-            if s["std"] < 0.0001:
-                s["std"] = 0.01
+            s["var"] = decay * s.get("var", s["std"]**2) + (1 - decay) * (r - s["mean"])**2
+            s["std"] = max(math.sqrt(s["var"]), 0.005)
 
-        k_val = 0.5
+        k_val = 0.2
         h_val = 2.5
         Z = (log_rets[-1] - s["mean"]) / s["std"] if s["std"] > 0 else 0
 
