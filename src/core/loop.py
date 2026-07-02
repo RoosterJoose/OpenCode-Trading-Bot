@@ -308,6 +308,17 @@ class TradingLoop:
     async def _cycle(self, hl: ExchangeAdapter, exchange: PaperPerpExchange):
         if self._cycle_count % 5 == 0:
             logger.info("heartbeat cycle=%d", self._cycle_count)
+
+        # Self-heal 1: detect entry stall — if no ENTRY_DIAG for 20+ cycles (20 min), restart
+        if not hasattr(self, "_last_entry_diag_cycle"):
+            self._last_entry_diag_cycle = 0
+        # The ENTRY_DIAG check will update this counter from _process_asset
+        cycles_stalled = self._cycle_count - self._last_entry_diag_cycle
+        if cycles_stalled > 20 and self._cycle_count > 30:
+            logger.warning("SELF-HEAL: %d cycles without entry diagnostics — restarting", cycles_stalled)
+            self.store.put_state("self_heal", json.dumps({"action": "restart", "reason": f"entry_stall_{cycles_stalled}cycles"}))
+            os._exit(42)
+
         # Auto-pause check (sharpe_tracker runs daily at 00:05 UTC)
         try:
             paused = self.store.get_state("bot_paused")
@@ -570,6 +581,13 @@ class TradingLoop:
         await self.notifier.daily_drawdown(eq, self.risk.peak_equity,
             (self.risk.peak_equity - eq) / self.risk.peak_equity * 100 if self.risk.peak_equity > 0 else 0)
                 # Persist risk state + strategy cooldowns (survive restarts)
+        # Self-heal 3: loss streak auto-reset — if stale and blocked, clear
+        gs = getattr(self.risk, 'global_loss_streak', 0)
+        if gs >= 5 and self._cycle_count - self._last_entry_diag_cycle > 120:
+            logger.warning("SELF-HEAL: GS=%d stale for 120+ cycles — clearing", gs)
+            self._global_loss_streak = 0
+            self.risk.global_loss_streak = 0
+            self.store.put_state("risk_global_loss_streak", "0")
         self._save_risk_state()
         self._save_strategy_cooldowns()
         self.store.put_state("altfins_cycle", str(self._altfins_cycle))
@@ -681,6 +699,7 @@ class TradingLoop:
         # Check risk gates (primary regime influences risk budget)
         risk_ok, risk_msg = self.risk.allow_entry(exchange.gross_exposure, exchange.effective_leverage)
         if not risk_ok:
+            self._last_entry_diag_cycle = self._cycle_count
             logger.info("ENTRY_DIAG %s: skip -- risk: %s", asset, risk_msg)
             if "wr_halt" in risk_msg or "daily_loss" in risk_msg or "loss_streak" in risk_msg:
                 self._send_alert_ratelimited("risk_halt", f"⚠️ RISK HALT: {risk_msg}", 3600.0)
@@ -688,6 +707,7 @@ class TradingLoop:
 
         oi_ok, oi_msg = self.risk.oi_gate_allows(asset)
         if not oi_ok:
+            self._last_entry_diag_cycle = self._cycle_count
             logger.info("ENTRY_DIAG %s: skip -- OI: %s", asset, oi_msg)
             return
 
@@ -695,11 +715,13 @@ class TradingLoop:
         spread_pct = hl.get_spread(asset)
         spread_ok, spread_msg = self.risk.spread_gate_allows(asset, spread_pct)
         if not spread_ok:
+            self._last_entry_diag_cycle = self._cycle_count
             logger.info("ENTRY_DIAG %s: skip -- spread: %s", asset, spread_msg)
             return
 
         funding_ok, funding_msg = self.risk.funding_gate(funding_rate)
         if not funding_ok:
+            self._last_entry_diag_cycle = self._cycle_count
             logger.info("ENTRY_DIAG %s: skip -- funding: %s", asset, funding_msg)
             return
 
@@ -878,11 +900,13 @@ class TradingLoop:
             return False, risk_msg
         oi_ok, oi_msg = self.risk.oi_gate_allows(intent.asset)
         if not oi_ok:
+            self._last_entry_diag_cycle = self._cycle_count
             logger.info("ENTRY_DIAG %s: skip -- OI: %s", asset, oi_msg)
             return False, oi_msg
         funding_rate = await hl.get_funding_rate(intent.asset)
         funding_ok, funding_msg = self.risk.funding_gate(funding_rate)
         if not funding_ok:
+            self._last_entry_diag_cycle = self._cycle_count
             logger.info("ENTRY_DIAG %s: skip -- funding: %s", asset, funding_msg)
             return False, funding_msg
 
