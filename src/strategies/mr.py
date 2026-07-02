@@ -68,6 +68,7 @@ class MeanReversion(PerpStrategy):
         if len(candles) < 50:
             return None
 
+        is_long = True  # default (shadowed by real value before usage)
         last = candles[-1]
         vol_min = self._get_threshold(asset, "volume_min_usd", self.min_volume_usd)
         if last.volume * last.close < vol_min:

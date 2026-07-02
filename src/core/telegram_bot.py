@@ -97,6 +97,8 @@ class TelegramBot:
                 await self._cmd_help()
             elif cmd in ("/balance", "/bal"):
                 await self._cmd_balance()
+            elif cmd == "/audit":
+                await self._cmd_audit()
             elif cmd == "/close_all":
                 await self._cmd_close_all()
             else:
@@ -192,6 +194,16 @@ class TelegramBot:
         msg = 'Conservative: ${:.2f} (DD {:.1f}%)\nAggressive: {}'.format(eq_f, dd, agg_eq)
         await self._send(msg)
 
+    async def _cmd_audit(self):
+        await self._send("Running full audit...")
+        proc = await asyncio.create_subprocess_exec(
+            "/opt/hermes-trading-bot/.venv/bin/python",
+            "/opt/hermes-trading-bot/scripts/telegram_audit.py",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        result = stdout.decode().strip()
+        await self._send(result)
+
     async def _cmd_close_all(self):
         positions = self.store.get_state("positions") or []
         if not positions:
@@ -208,6 +220,7 @@ class TelegramBot:
             "/pause — pause trading immediately\n"
             "/resume — resume trading\n"
             "/balance — see both bot balances\n"
+            "/audit — run full bot audit\n"
             "/close_all — emergency close all positions\n"
             "/help — this message"
         )
