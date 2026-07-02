@@ -985,7 +985,6 @@ class TradingLoop:
             return RegimeType.HIGH_VOL
 
         # CUSUM regime detection (replaces ADX as primary — less lag)
-        # Standardized log-returns with EWMA mean/std, drift target delta=1, k=0.5, decision h=4
         log_rets = []
         for i in range(1, len(closes)):
             if closes[i-1] > 0:
@@ -994,7 +993,6 @@ class TradingLoop:
         if len(log_rets) < 10:
             return RegimeType.RANDOM_WALK
 
-        # Running EWMA mean and std of log returns
         key = f"{asset}_cr_{max_lookback}"
         s = self._cusum.get(key, {"S_high": 0, "S_low": 0, "mean": None, "std": None})
 
@@ -1012,7 +1010,7 @@ class TradingLoop:
                 s["std"] = 0.01
 
         k_val = 0.5
-        h_val = 4.0
+        h_val = 2.5
         Z = (log_rets[-1] - s["mean"]) / s["std"] if s["std"] > 0 else 0
 
         s["S_high"] = max(0, s["S_high"] + Z - k_val)
