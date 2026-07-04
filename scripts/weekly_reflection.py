@@ -117,6 +117,8 @@ async def main():
     c.close()
     
     msg = "\n".join(sections)
+    c.execute("INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)", ("weekly_recs_" + datetime.utcnow().strftime("%Y-%m-%d"), json.dumps(sections)))
+    c.commit()
     if tok and chat:
         async with httpx.AsyncClient(timeout=10) as cl:
             await cl.post(f"https://api.telegram.org/bot{tok}/sendMessage", json={"chat_id": chat, "text": msg})
