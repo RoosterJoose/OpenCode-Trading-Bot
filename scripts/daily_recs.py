@@ -82,6 +82,31 @@ async def main():
             diag.append("  Q3 Hold: " + ("<1h beats >1h" if er>lr else ">1h beats <1h" if lr>er else "neutral"))
         if auto_c is not None:
             diag.append("  Q4 Clustering: " + ("YES ({:.2f})".format(auto_c) if auto_c>0.3 else "NO ({:.2f})".format(auto_c)))
+        
+        # NotebookLM: Time-of-Day heatmap
+        hours = [0]*24
+        for p_str, ct in [(r[0], r[5]) for r in recent if r[0] and r[5]]:
+            try:
+                h = int(ct[11:13])
+                hours[h] += float(p_str) if float(p_str) != 0 else 0
+            except: pass
+        tod = " ".join(f"{i:02d}:${h:+.0f}" for i, h in enumerate(hours) if h != 0)
+        if tod:
+            diag.append("  Time: " + tod[:80])
+        
+        # NotebookLM: Drawdown duration — portfolio level from equity snapshots
+        snapshots = c.execute("SELECT equity, timestamp FROM equity_snapshots ORDER BY id DESC LIMIT 100").fetchall()
+        if len(snapshots) >= 10:
+            peak_since = max(float(s[0]) for s in snapshots)
+            current = float(snapshots[0][0])
+            dd_pct = (peak_since - current) / peak_since * 100 if peak_since > 0 else 0
+            # Duration: how many snapshots since last peak
+            depth = 0
+            for s in snapshots:
+                if float(s[0]) >= peak_since * 0.99:
+                    break
+                depth += 1
+            diag.append(f"  Port DD: {dd_pct:.1f}% ({depth * 5} min since peak)")
         if hist:
             diag.append("  R: " + " ".join(f"{k}:{v}%" for k,v in hist.items()))
         

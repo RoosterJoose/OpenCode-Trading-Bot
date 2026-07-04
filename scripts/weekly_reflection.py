@@ -122,6 +122,28 @@ async def main():
             h_str = " ".join(f"{k}:{v}%" for k,v in hist.items())
             diag_lines.append(f"  R-multiple dist: {h_str}")
         
+        # Time-of-Day heatmap
+        hours = [0]*24
+        for p_str, ct in [(r[0], r[5]) for r in week if r[0] and r[5]]:
+            try:
+                h = int(ct[11:13])
+                hours[h] += float(p_str) if float(p_str) != 0 else 0
+            except: pass
+        tod = " ".join(f"{i:02d}:${h:+.0f}" for i, h in enumerate(hours) if h != 0)
+        if tod:
+            diag_lines.append(f"  Time: {tod[:80]}")
+        
+        # Drawdown duration (portfolio level)
+        snapshots = c.execute("SELECT equity FROM equity_snapshots ORDER BY id DESC LIMIT 100").fetchall()
+        if len(snapshots) >= 10:
+            peak = max(float(s[0]) for s in snapshots)
+            cur = float(snapshots[0][0])
+            depth = 0
+            for s in snapshots:
+                if float(s[0]) >= peak * 0.99: break
+                depth += 1
+            diag_lines.append(f"  Port DD: {(peak-cur)/peak*100:.1f}% ({depth*5}min recovery)")
+        
         diag_lines.append(f"  Day trend: {tr}")
         lines.extend(diag_lines)
     
