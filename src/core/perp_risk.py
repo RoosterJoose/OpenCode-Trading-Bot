@@ -71,7 +71,7 @@ class PerpRiskManager:
         self._recent_outcomes: list[bool] = []
         self._active_positions: set[str] = set()
         self._gross_exposure: float = 0.0
-        self.max_consecutive_losses: int = 3
+        self.max_consecutive_losses: int = 5
         self.max_global_losses: int = 3
         self._global_loss_streak: int = 0
 

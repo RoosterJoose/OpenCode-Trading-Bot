@@ -597,6 +597,10 @@ class TradingLoop:
                 elif "gs_halt" in top_reason or "loss_streak" in top_reason:
                     self.risk.global_loss_streak = 0
                     self.store.put_state("risk_global_loss_streak", "0")
+                elif "lev_halt" in top_reason and self._block_reasons.get(top_reason, 0) > 120:
+                    logger.warning("SELF-HEAL: lev_halt stale for 120+ cycles — clearing")
+                    self.store.put_state("equity_snapshots", json.dumps({"eq": 0, "peak": 0}))
+                self._block_reasons = {}
                 self._block_reasons = {}
         
         # Self-heal 4: loss streak auto-reset — if stale and blocked, clear
