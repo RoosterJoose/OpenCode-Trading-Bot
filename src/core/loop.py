@@ -649,6 +649,21 @@ class TradingLoop:
         hl: ExchangeAdapter,
         exchange: PaperPerpExchange,
     ):
+        # Self-heal: candle freshness + quality check
+        if candles:
+            try:
+                newest = max(c.timestamp for c in candles)
+                age_h = (time.time() - newest) / 3600
+                if age_h > 2:
+                    logger.warning("STALE_CANDLES %s: %.1fh old — skipping", asset, age_h)
+                    return
+                bad = [c for c in candles if c.high <= c.low or c.close <= 0]
+                if len(bad) > len(candles) * 0.5:
+                    logger.warning("CORRUPT_CANDLES %s: %d/%d corrupted — skipping", asset, len(bad), len(candles))
+                    return
+            except Exception:
+                pass
+
         pos = await exchange.fetch_position(asset)
         price = await exchange.fetch_price(asset)
 
@@ -676,6 +691,14 @@ class TradingLoop:
                 pos.mae_pct = current_mae
             if current_mfe > (getattr(pos, 'mfe_pct', 0) or 0):
                 pos.mfe_pct = current_mfe
+
+        # Position concentration check: max 50% equity in one position
+        if pos:
+            notional = abs(pos.size) * (pos.entry_price if pos.entry_price > 0 else 1)
+            max_notional = exchange.equity * 0.50 if hasattr(exchange, 'equity') else 999999
+            if notional > max_notional:
+                logger.warning("CONCENTRATION_HALT %s: notional=%.0f > 50%%%% eq=%.0f", asset, notional, max_notional)
+                return
 
         if pos and exchange.check_liquidation(asset):
             logger.warning("%s liquidated", asset)
