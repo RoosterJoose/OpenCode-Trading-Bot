@@ -588,7 +588,7 @@ class TradingLoop:
             top_reason = max(self._block_reasons, key=self._block_reasons.get)
             top_count = self._block_reasons[top_reason]
             total_blocks = sum(self._block_reasons.values())
-            if total_blocks >= 60 and top_count / max(total_blocks, 1) > 0.8:
+            if total_blocks >= 30 and top_count / max(total_blocks, 1) > 0.8:
                 logger.warning("SELF-HEAL: %s blocks dominate (%.0f%%) for %d cycles — clearing", 
                                top_reason, top_count/total_blocks*100, total_blocks)
                 if "wr_halt" in top_reason:
@@ -597,16 +597,16 @@ class TradingLoop:
                 elif "gs_halt" in top_reason or "loss_streak" in top_reason:
                     self.risk.global_loss_streak = 0
                     self.store.put_state("risk_global_loss_streak", "0")
-                elif "lev_halt" in top_reason and self._block_reasons.get(top_reason, 0) > 120:
-                    logger.warning("SELF-HEAL: lev_halt stale for 120+ cycles — clearing")
+                elif "lev_halt" in top_reason and self._block_reasons.get(top_reason, 0) > 60:
+                    logger.warning("SELF-HEAL: lev_halt stale for 30+ cycles — clearing")
                     self.store.put_state("equity_snapshots", json.dumps({"eq": 0, "peak": 0}))
                 self._block_reasons = {}
                 self._block_reasons = {}
         
         # Self-heal 4: loss streak auto-reset — if stale and blocked, clear
         gs = getattr(self.risk, 'global_loss_streak', 0)
-        if gs >= 5 and self._cycle_count - self._last_entry_diag_cycle > 120:
-            logger.warning("SELF-HEAL: GS=%d stale for 120+ cycles — clearing", gs)
+        if gs >= 5 and self._cycle_count - self._last_entry_diag_cycle > 30:
+            logger.warning("SELF-HEAL: GS=%d stale for 30+ cycles — clearing", gs)
             self._global_loss_streak = 0
             self.risk.global_loss_streak = 0
             self.store.put_state("risk_global_loss_streak", "0")
