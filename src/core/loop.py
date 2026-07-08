@@ -314,7 +314,7 @@ class TradingLoop:
         last = self._sent_alerts.get(key, 0.0)
         if now - last >= min_interval:
             self._sent_alerts[key] = now
-            asyncio.ensure_future(self.notifier.send_message(message))
+            asyncio.ensure_future(self.notifier.send(message))
 
     async def _cycle(self, hl: ExchangeAdapter, exchange: PaperPerpExchange):
         if self._cycle_count % 5 == 0:
@@ -408,7 +408,7 @@ class TradingLoop:
             logger.warning("ASSET COVERAGE: %d/%d assets have candles — missing: %s", covered, len(self.assets), missing)
             self._asset_coverage_warned = True
             if covered < 20:
-                await self.notifier.send_message(
+                await self.notifier.send(
                     f"⚠️ ASSET COVERAGE: {covered}/{len(self.assets)} assets active — {missing}"
                 )
         else:
