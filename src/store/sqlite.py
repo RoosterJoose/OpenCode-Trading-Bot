@@ -104,6 +104,18 @@ class Store:
                     impact_notes TEXT NOT NULL DEFAULT ''
                 );
 
+                CREATE TABLE IF NOT EXISTS altfins_signals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    asset TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    confidence REAL NOT NULL DEFAULT 0,
+                    bucket TEXT DEFAULT '',
+                    signal_time TEXT NOT NULL,
+                    created_at TEXT DEFAULT (datetime('now'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_altfins_asset_time ON altfins_signals(asset, signal_time);
+
                 CREATE TABLE IF NOT EXISTS candles (
                     asset TEXT NOT NULL,
                     timestamp REAL NOT NULL,
@@ -355,6 +367,14 @@ class Store:
                 (cutoff,),
             ).fetchall()
             return {r["asset"]: {"count": r["cnt"], "latest": r["latest"]} for r in rows}
+
+    def save_altfins_signal(self, asset: str, source: str, direction: str, confidence: float, bucket: str, signal_time: str):
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO altfins_signals (asset, source, direction, confidence, bucket, signal_time) VALUES (?, ?, ?, ?, ?, ?)",
+                (asset, source, direction, confidence, bucket, signal_time),
+            )
+            self._conn.commit()
 
     def close(self):
         self._conn.close()

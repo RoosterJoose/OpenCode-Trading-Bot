@@ -149,6 +149,7 @@ class CrossSectionalMomentum(PerpStrategy):
         side = Side.LONG if is_long else Side.SHORT
         entry_price = last.close
 
+        confidence = self.blend_altfins_confidence(confidence, signals)
         return side, confidence, {
             "entry_price": entry_price,
             "ret_7d": round(ret_7d * 100, 2),

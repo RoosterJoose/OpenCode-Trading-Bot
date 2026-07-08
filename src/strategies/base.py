@@ -5,6 +5,26 @@ from src.core.types import PerpCandle, PerpPosition, RegimeType, Side, Signal
 
 
 class PerpStrategy(ABC):
+    ALTFINS_WEIGHT = 0.15
+
+    @staticmethod
+    def blend_altfins_confidence(local_confidence: float, altfins_signals: list) -> float:
+        """Blend local TA confidence with altFINS signals using a weighted composite.
+        
+        altFINS acts as a confidence modifier (0.15 weight), not a standalone trigger.
+        If altFINS agrees with direction, confidence gets a boost.
+        If altFINS disagrees or is absent, confidence gets a small penalty.
+        """
+        if not altfins_signals:
+            # No altFINS data: slight penalty
+            return local_confidence * 0.95
+        
+        # Find the altFINS signal for this direction
+        aligned = any(s.confidence >= 0.6 for s in altfins_signals)
+        if aligned:
+            return local_confidence * (1.0 + PerpStrategy.ALTFINS_WEIGHT)
+        else:
+            return local_confidence * (1.0 - PerpStrategy.ALTFINS_WEIGHT * 0.5)
     def __init__(self):
         self._dynamic_thresholds: dict = {}
 

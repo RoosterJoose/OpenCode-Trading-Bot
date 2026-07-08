@@ -195,6 +195,7 @@ class MeanReversion(PerpStrategy):
 
         side = Side.LONG if is_long else Side.SHORT
 
+        confidence = self.blend_altfins_confidence(confidence, signals)
         return side, confidence, {
             "entry_price": entry_price,
             "stop_loss": stop,

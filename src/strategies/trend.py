@@ -191,6 +191,7 @@ class TrendFollow(PerpStrategy):
         confidence = min(confidence, 1.0)
         side = Side.LONG if is_long else Side.SHORT
 
+        confidence = self.blend_altfins_confidence(confidence, signals)
         return side, confidence, {
             "entry_price": entry_price,
             "donchian_upper": round(upper, 2),

@@ -493,6 +493,15 @@ class TradingLoop:
             altfins_signals = []
             for asset_sigs in self.signal_cache.values():
                 for s in asset_sigs:
+                    if self._cycle_count % 5 == 0:
+                        try:
+                            self.store.save_altfins_signal(
+                                s.asset, s.source, s.direction.value, s.confidence, s.bucket or "",
+                                s.timestamp.isoformat() if s.timestamp else datetime.now(timezone.utc).isoformat(),
+                            )
+                        except Exception:
+                            pass
+                for s in asset_sigs:
                     altfins_signals.append({
                         "asset": s.asset, "source": s.source,
                         "direction": s.direction.value,
