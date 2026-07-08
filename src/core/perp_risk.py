@@ -272,10 +272,11 @@ class PerpRiskManager:
     def set_gross_exposure(self, exposure: float):
         self._gross_exposure = exposure
 
-    def record_trade(self, asset: str, pnl_pct: float, pnl_dollars: float):
+    def record_trade(self, asset: str, pnl_pct: float, pnl_dollars: float, exit_reason: str = ""):
         if pnl_pct < 0:
-            self._consecutive_losses[asset] += 1
-            self._global_loss_streak += 1
+            if exit_reason != "knife_guard_time_exit":
+                self._consecutive_losses[asset] += 1
+                self._global_loss_streak += 1
         else:
             self._consecutive_losses[asset] = 0
             self._global_loss_streak = 0

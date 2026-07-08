@@ -81,17 +81,7 @@ class TrendFollow(PerpStrategy):
             logger.info("TREND %s: regime=%s", asset, regime.value)
             return None
 
-        # Multi-timeframe alignment: fast and slow EMAs must agree on direction
-        ema9 = self._ema(candles, 9)
-        ema50 = self._ema(candles, 50)
-        if ema9 is not None and ema50 is not None:
-            last = candles[-1]
-            fast_aligned = (is_long and last.close > ema9) or (not is_long and last.close < ema9)
-            slow_aligned_loc = (is_long and last.close > ema50) or (not is_long and last.close < ema50)
-            if not (fast_aligned and slow_aligned_loc):
-                logger.debug("TREND %s: MTF misaligned ema9=%.2f ema50=%.2f", asset, ema9, ema50)
-                return None
-
+        # Asset-specific drift regime
         last = candles[-1]
         regime_str = regime.value
         logger.info("TREND %s: PASSED regime=%s — checking breakout", asset, regime_str)
@@ -136,6 +126,15 @@ class TrendFollow(PerpStrategy):
             if divergence < -0.03 and is_long:
                 return None
 
+        # Multi-timeframe alignment: fast and slow EMAs must agree on direction
+        ema9 = self._ema(candles, 9)
+        ema50 = self._ema(candles, 50)
+        if ema9 is not None and ema50 is not None:
+            fast_aligned = (is_long and last.close > ema9) or (not is_long and last.close < ema9)
+            slow_aligned_loc = (is_long and last.close > ema50) or (not is_long and last.close < ema50)
+            if not (fast_aligned and slow_aligned_loc):
+                logger.debug("TREND %s: MTF misaligned ema9=%.2f ema50=%.2f", asset, ema9, ema50)
+                return None
         atr = self._atr(candles)
         entry_price = last.close
 

@@ -106,6 +106,7 @@ class TradingLoop:
         self._kalshi = None
         self._kalshi_funding = {}
         self._strategy_budget = {}
+        self._ic_budget_cycle = 0
         token = self.config.get("telegram", {}).get("bot_token") or os.environ.get("HERMES_TELEGRAM_BOT_TOKEN", "")
         chat_id = self.config.get("telegram", {}).get("chat_id") or os.environ.get("HERMES_TELEGRAM_CHAT_ID", "")
         self.telegram = TelegramBot(token, chat_id, self.store)
@@ -158,6 +159,15 @@ class TradingLoop:
                 self._altfins_cycle = int(saved_ac)
         except Exception:
             pass
+
+        # Restore IC budget cycle counter
+        try:
+            saved_ic = self.store.get_state("ic_budget_cycle")
+            if saved_ic:
+                self._ic_budget_cycle = int(saved_ic)
+        except Exception:
+            pass
+
 
         kalshi_key_id = self.config.get("kalshi", {}).get("api_key_id", "")
         kalshi_pk = self.config.get("kalshi", {}).get("private_key", "") or os.environ.get("KALSHI_PRIVATE_KEY", "")
@@ -343,6 +353,7 @@ class TradingLoop:
             logger.debug("dynamic thresholds: %s", e)
         # Load strategy budget from strategy_budget.py
         self._strategy_budget = {}
+        self._ic_budget_cycle = 0
         token = self.config.get("telegram", {}).get("bot_token") or os.environ.get("HERMES_TELEGRAM_BOT_TOKEN", "")
         chat_id = self.config.get("telegram", {}).get("chat_id") or os.environ.get("HERMES_TELEGRAM_CHAT_ID", "")
         self.telegram = TelegramBot(token, chat_id, self.store)
@@ -582,7 +593,20 @@ class TradingLoop:
         self.store.put_state("paper_peak_equity", str(self.risk.peak_equity))
         await self.notifier.daily_drawdown(eq, self.risk.peak_equity,
             (self.risk.peak_equity - eq) / self.risk.peak_equity * 100 if self.risk.peak_equity > 0 else 0)
-                # Persist risk state + strategy cooldowns (survive restarts)
+
+        # IC budget refresh every 30 cycles
+        self._ic_budget_cycle += 1
+        if self._ic_budget_cycle % 30 == 0:
+            try:
+                from src.core.ic_allocator import compute_weights
+                weights = compute_weights()
+                budget = {"weights": weights, "source": "ic_rollingsharpe", "timestamp": time.time()}
+                self.store.put_state("strategy_budget", json.dumps(budget))
+                self._strategy_budget = weights
+                logger.info("IC_BUDGET: %s", {k: round(v,3) for k, v in weights.items()})
+            except Exception as e:
+                logger.error("IC budget failed: %s", e)
+        # Persist risk state + strategy cooldowns (survive restarts)
         # Self-heal 3: detect dominant block reason — if same reason for 60 cycles, auto-clear
         if hasattr(self, '_block_reasons') and self._block_reasons:
             top_reason = max(self._block_reasons, key=self._block_reasons.get)
@@ -613,6 +637,7 @@ class TradingLoop:
         self._save_risk_state()
         self._save_strategy_cooldowns()
         self.store.put_state("altfins_cycle", str(self._altfins_cycle))
+        self.store.put_state("ic_budget_cycle", str(self._ic_budget_cycle))
         self.store.put_state("positions", [
             {
                 "asset": p.asset,
@@ -725,6 +750,15 @@ class TradingLoop:
                         await self._close(asset, pos, price, reason, exchange)
                         return
 
+                # BTC knife-guard time-stop: close longs held >60min during confirmed downtrend
+                if self._btc_knife_block and pos.side == Side.LONG:
+                    age = datetime.now(timezone.utc) - pos.entry_time
+                    if age.total_seconds() > 3600:
+                        logger.warning("KNIFE_TIMESTOP %s: long held %.0f min >60 min during BTC knife guard -- closing",
+                                       asset, age.total_seconds() / 60)
+                        await self._close(asset, pos, price, "knife_guard_time_exit", exchange)
+                        return
+
         # Dual regime (NotebookLM): primary (200-period) for sizing/risk,
         # secondary (50-period) for entry direction
         # Regime detection: use 4h aggregated candles (NotebookLM round 10)
@@ -807,6 +841,10 @@ class TradingLoop:
                 mr_min = 0.55
                 if confidence < mr_min or strat.name() != "mr":
                     continue
+            # Absolute floor for non-MR strategies (trend/donchian/need >= 0.70 regardless of global MIN)
+            if strat.name() != "mr" and confidence < 0.70:
+                logger.debug("%s %s: trend confidence %.2f < 0.70 floor", strat.name(), asset, confidence)
+                continue
 
             # BTC falling-knife guard: block ALL longs during strong BTC downtrend
             if self._btc_knife_block and side == Side.LONG:
@@ -1200,7 +1238,7 @@ class TradingLoop:
 
         if close_pct < 1.0:
             # Partial close (scale-out): close_pct of position, leave the rest
-            self.risk.record_trade(asset, pos.pnl_pct, pnl_dollars)
+            self.risk.record_trade(asset, pos.pnl_pct, pnl_dollars, reason)
             trade = {
                 "asset": asset,
                 "side": pos.side.value,
@@ -1238,7 +1276,7 @@ class TradingLoop:
         pnl_pct = pos.pnl_pct
         pnl_dollars = pos.unrealized_pnl
 
-        self.risk.record_trade(asset, pnl_pct, pnl_dollars)
+        self.risk.record_trade(asset, pnl_pct, pnl_dollars, reason)
         self.risk.record_position_close(asset)
         self.signal_tracker.record(pos.signal_source, pnl_pct > 0)
         for source in pos.component_sources:
