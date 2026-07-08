@@ -107,6 +107,7 @@ class TradingLoop:
         self._kalshi_funding = {}
         self._strategy_budget = {}
         self._ic_budget_cycle = 0
+        self._block_reasons: dict[str, int] = {}
         token = self.config.get("telegram", {}).get("bot_token") or os.environ.get("HERMES_TELEGRAM_BOT_TOKEN", "")
         chat_id = self.config.get("telegram", {}).get("chat_id") or os.environ.get("HERMES_TELEGRAM_CHAT_ID", "")
         self.telegram = TelegramBot(token, chat_id, self.store)
@@ -323,7 +324,6 @@ class TradingLoop:
         # Self-heal 1: detect entry stall — if no ENTRY_DIAG for 20+ cycles (20 min), restart
         if not hasattr(self, "_last_entry_diag_cycle"):
             self._last_entry_diag_cycle = 0
-        self._block_reasons: dict[str, int] = {}
         # The ENTRY_DIAG check will update this counter from _process_asset
         cycles_stalled = self._cycle_count - self._last_entry_diag_cycle
         if cycles_stalled > 20 and self._cycle_count > 30:
@@ -354,6 +354,7 @@ class TradingLoop:
         # Load strategy budget from strategy_budget.py
         self._strategy_budget = {}
         self._ic_budget_cycle = 0
+        self._block_reasons: dict[str, int] = {}
         token = self.config.get("telegram", {}).get("bot_token") or os.environ.get("HERMES_TELEGRAM_BOT_TOKEN", "")
         chat_id = self.config.get("telegram", {}).get("chat_id") or os.environ.get("HERMES_TELEGRAM_CHAT_ID", "")
         self.telegram = TelegramBot(token, chat_id, self.store)
@@ -625,8 +626,11 @@ class TradingLoop:
                     logger.warning("SELF-HEAL: lev_halt stale for 30+ cycles — clearing")
                     self.store.put_state("equity_snapshots", json.dumps({"eq": 0, "peak": 0}))
                 self._block_reasons = {}
-                self._block_reasons = {}
         
+        # Clear block reasons periodically to prevent unbounded growth
+        if self._cycle_count % 60 == 0:
+            self._block_reasons = {}
+
         # Self-heal 4: loss streak auto-reset — if stale and blocked, clear
         gs = getattr(self.risk, 'global_loss_streak', 0)
         if gs >= 5 and self._cycle_count - self._last_entry_diag_cycle > 30:
@@ -779,7 +783,7 @@ class TradingLoop:
         risk_ok, risk_msg = self.risk.allow_entry(exchange.gross_exposure, exchange.effective_leverage)
         if not risk_ok:
             self._last_entry_diag_cycle = self._cycle_count
-            reason_key = f"risk:msgs"
+            reason_key = f"risk:{risk_msg[:60]}"
             self._block_reasons[reason_key] = self._block_reasons.get(reason_key, 0) + 1
             logger.info("ENTRY_DIAG %s: skip -- risk: %s", asset, risk_msg)
             if "wr_halt" in risk_msg or "daily_loss" in risk_msg or "loss_streak" in risk_msg:
@@ -789,7 +793,7 @@ class TradingLoop:
         oi_ok, oi_msg = self.risk.oi_gate_allows(asset)
         if not oi_ok:
             self._last_entry_diag_cycle = self._cycle_count
-            reason_key = f"OI:msgs"
+            reason_key = f"OI:{oi_msg[:50]}"
             self._block_reasons[reason_key] = self._block_reasons.get(reason_key, 0) + 1
             logger.info("ENTRY_DIAG %s: skip -- OI: %s", asset, oi_msg)
             return
@@ -799,7 +803,7 @@ class TradingLoop:
         spread_ok, spread_msg = self.risk.spread_gate_allows(asset, spread_pct)
         if not spread_ok:
             self._last_entry_diag_cycle = self._cycle_count
-            reason_key = f"spread:msgs"
+            reason_key = f"spread:{spread_msg[:50]}"
             self._block_reasons[reason_key] = self._block_reasons.get(reason_key, 0) + 1
             logger.info("ENTRY_DIAG %s: skip -- spread: %s", asset, spread_msg)
             return
@@ -807,7 +811,7 @@ class TradingLoop:
         funding_ok, funding_msg = self.risk.funding_gate(funding_rate)
         if not funding_ok:
             self._last_entry_diag_cycle = self._cycle_count
-            reason_key = f"funding:msgs"
+            reason_key = f"funding:{funding_msg[:50]}"
             self._block_reasons[reason_key] = self._block_reasons.get(reason_key, 0) + 1
             logger.info("ENTRY_DIAG %s: skip -- funding: %s", asset, funding_msg)
             return
