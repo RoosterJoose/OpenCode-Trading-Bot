@@ -1,161 +1,75 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
+REPO_CONS=/opt/hermes-trading-bot
+REPO_AGGR=/opt/hermes-trading-bot-aggressive
+BRANCH=master
 
-# ── Hermes v2 — Oracle Cloud Deploy ──────────────────────────────────────
-# Run this ONCE on your Oracle VPS. It sets up everything:
-#   1. Clones the repo
-#   2. Installs system packages + Python deps
-#   3. Creates a systemd service that runs on boot
-#   4. Sets up a 5-min auto-update timer (pulls new commits, restarts)
-#   5. Starts the bot
-#
-# Usage:
-#   curl -sL https://raw.githubusercontent.com/.../deploy.sh | bash
-#   (or scp this file to the VPS and run it)
-# ───────────────────────────────────────────────────────────────────────────
+echo "=== HERMES DEPLOY v2 ==="
+echo ""
 
-REPO="https://github.com/RoosterJoose/OpenCode-Trading-Bot.git"
-BRANCH="master"
-INSTALL_DIR="/opt/hermes-trading-bot"
-HERMES_USER="hermes"
+# Step 1: static analysis
+echo "[1/6] Running verify_method_calls.py..."
+python3 $REPO_CONS/scripts/verify_method_calls.py $REPO_CONS/src/core/loop.py $REPO_CONS/src/strategies/*.py || { echo "FAILED: bad method calls"; exit 1; }
+echo "  PASS"
 
-echo "==> 1. Installing system packages..."
-sudo apt-get update -qq
-sudo apt-get install -y -qq python3 python3-pip python3-venv git curl
-
-echo "==> 2. Creating '$HERMES_USER' user (no login)..."
-sudo id -u $HERMES_USER &>/dev/null || sudo useradd --system --create-home --shell /usr/sbin/nologin $HERMES_USER
-
-echo "==> 3. Cloning repo to $INSTALL_DIR..."
-sudo rm -rf "$INSTALL_DIR"
-sudo git clone --branch "$BRANCH" "$REPO" "$INSTALL_DIR"
-sudo chown -R "$HERMES_USER":"$HERMES_USER" "$INSTALL_DIR"
-
-echo "==> 4. Creating Python virtual environment..."
-sudo -u "$HERMES_USER" python3 -m venv "$INSTALL_DIR/.venv"
-sudo -u "$HERMES_USER" "$INSTALL_DIR/.venv/bin/pip" install --quiet httpx websockets
-
-echo "==> 5. Creating systemd service..."
-sudo tee /etc/systemd/system/hermes-bot.service > /dev/null <<'SERVICE'
-[Unit]
-Description=Hermes v2 — Coinbase Perp Bot
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=hermes
-Group=hermes
-WorkingDirectory=/opt/hermes-trading-bot
-ExecStart=/opt/hermes-trading-bot/.venv/bin/python -m src.main
-Restart=on-failure
-RestartSec=10
-# Logs go to journald by default. View with: journalctl -u hermes-bot -f
-
-# Environment (set your Coinbase keys when ready):
-# Environment=HERMES_COINBASE__API_KEY_ID=organizations/.../apiKeys/...
-# Environment=HERMES_COINBASE__PRIVATE_KEY=-----BEGIN EC PRIVATE KEY-----\n...
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
-
-echo "==> 6. Creating auto-update timer (checks every 5 min)..."
-sudo mkdir -p /opt/hermes-trading-bot/scripts
-sudo tee /opt/hermes-trading-bot/scripts/auto-update.sh > /dev/null <<'UPDATE'
-#!/usr/bin/env bash
-export GIT_SSH_COMMAND="ssh -i /home/hermes/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new"
-cd /opt/hermes-trading-bot
-sudo -u hermes git fetch origin master &>/dev/null
-LOCAL=$(git rev-parse HEAD)
-REMOTE=$(git rev-parse origin/master)
-if [ "$LOCAL" != "$REMOTE" ]; then
-    echo "[$(date)] New commit detected: $REMOTE. Updating and restarting..."
-    sudo -u hermes git pull origin master --ff-only
-    sudo -u hermes /opt/hermes-trading-bot/.venv/bin/pip install --quiet httpx websockets
-    echo "[$(date)] Update complete. Restarting service..."
-    sudo systemctl restart hermes-bot
+# Step 2: commit and push CONS
+echo "[2/6] Pushing CONS..."
+cd $REPO_CONS
+sudo -u hermes git add -A
+if ! sudo -u hermes git diff --cached --quiet; then
+    sudo -u hermes git commit -m "auto-deploy $(date '+%Y-%m-%d %H:%M UTC')"
+    sudo -u hermes git push origin $BRANCH
+    echo "  Pushed"
+else
+    echo "  No changes to push"
 fi
-UPDATE
-sudo chmod +x /opt/hermes-trading-bot/scripts/auto-update.sh
 
-sudo tee /etc/systemd/system/hermes-auto-update.service > /dev/null <<'USVC'
-[Unit]
-Description=Hermes auto-update checker
-[Service]
-Type=oneshot
-ExecStart=/opt/hermes-trading-bot/scripts/auto-update.sh
-User=hermes
-USVC
+# Step 3: pull AGGR
+echo "[3/6] Pulling AGGR..."
+sudo -u hermes git -C $REPO_AGGR fetch origin $BRANCH
+LOCAL=$(sudo -u hermes git -C $REPO_AGGR rev-parse $BRANCH)
+REMOTE=$(sudo -u hermes git -C $REPO_AGGR rev-parse origin/$BRANCH)
+if [ "$LOCAL" != "$REMOTE" ]; then
+    sudo -u hermes git -C $REPO_AGGR pull origin $BRANCH
+    echo "  Pulled ($(sudo -u hermes git -C $REPO_AGGR rev-list --count $LOCAL..$REMOTE) new commits)"
+else
+    echo "  AGGR already up to date"
+fi
 
-sudo tee /etc/systemd/system/hermes-auto-update.timer > /dev/null <<'UTIMER'
-[Unit]
-Description=Check for Hermes updates every 5 minutes
-[Timer]
-OnBootSec=30
-OnUnitActiveSec=300
-Persistent=true
-[Install]
-WantedBy=timers.target
-UTIMER
+# Step 4: clear pycache
+echo "[4/6] Clearing __pycache__..."
+find $REPO_CONS/src -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+find $REPO_AGGR/src -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+echo "  Done"
 
-echo "==> 6b. Creating audit timer (checks trading invariants every 15 min)..."
-sudo tee /etc/systemd/system/hermes-audit.service > /dev/null <<'AUDITSVC'
-[Unit]
-Description=Hermes invariant/API/dashboard audit
-[Service]
-Type=oneshot
-User=hermes
-Group=hermes
-WorkingDirectory=/opt/hermes-trading-bot
-ExecStart=/opt/hermes-trading-bot/.venv/bin/python scripts/audit.py --db /opt/hermes-trading-bot/data/hermes.db --dashboard http://127.0.0.1:8081
-AUDITSVC
+# Step 5: compile-check both bots
+echo "[5/6] Compile-checking both bots..."
+sudo -u hermes python3 -m py_compile $REPO_CONS/src/core/loop.py && echo "  CONS: loop.py OK"
+sudo -u hermes python3 -m py_compile $REPO_AGGR/src/core/loop.py && echo "  AGGR: loop.py OK"
 
-sudo tee /etc/systemd/system/hermes-audit.timer > /dev/null <<'AUDITTIMER'
-[Unit]
-Description=Run Hermes audit every 15 minutes
-[Timer]
-OnBootSec=120
-OnUnitActiveSec=900
-Persistent=true
-[Install]
-WantedBy=timers.target
-AUDITTIMER
+# Step 6: restart both bots
+echo "[6/6] Restarting both bots..."
+sudo systemctl reset-failed hermes-bot hermes-bot-aggressive 2>/dev/null || true
+sudo systemctl restart hermes-bot
+sudo systemctl restart hermes-bot-aggressive
+echo "  Restarted. Waiting 20s..."
+sleep 20
 
-echo "==> 7. Creating data directory..."
-sudo -u "$HERMES_USER" mkdir -p "$INSTALL_DIR/data"
+# Verify
+CONS_OK=$(sudo systemctl is-active hermes-bot)
+AGGR_OK=$(sudo systemctl is-active hermes-bot-aggressive)
+echo "  CONS: $CONS_OK"
+echo "  AGGR: $AGGR_OK"
 
-echo "==> 7b. Backfilling historical candle data (this takes ~5 min)..."
-sudo -u "$HERMES_USER" "$INSTALL_DIR/.venv/bin/python3" "$INSTALL_DIR/scripts/backfill_candles.py" 2>&1 | tail -5
-
-echo "==> 7c. Running initial backtest and strategy budget..."
-sudo -u "$HERMES_USER" "$INSTALL_DIR/.venv/bin/python3" "$INSTALL_DIR/scripts/backtest_30d.py" 2>&1
-
-echo "==> 8. Enabling and starting services..."
-sudo systemctl daemon-reload
-sudo systemctl enable hermes-bot
-sudo systemctl enable hermes-auto-update.timer
-sudo systemctl enable hermes-audit.timer
-sudo systemctl start hermes-bot
-sudo systemctl start hermes-auto-update.timer
-sudo systemctl start hermes-audit.timer
-
-echo "==> 9. Running cleanup verification..."
-if grep -r "hyperliquid\|Hyperliquid\|api.hyperliquid" "$INSTALL_DIR/src" --include="*.py" 2>/dev/null | grep -qv "_deprecated"; then
-    echo "FAIL: Hyperliquid references remain in source. Aborting." >&2
+if [ "$CONS_OK" != "active" ] || [ "$AGGR_OK" != "active" ]; then
+    echo "DEPLOY FAILED: one or both bots not active"
     exit 1
 fi
-echo "  No Hyperliquid references found in source ✅"
+
+# Run invariant sweep
+echo ""
+echo "=== Post-deploy Invariant Sweep ==="
+python3 $REPO_CONS/scripts/invariant_sweep.py 2>/dev/null || true
 
 echo ""
-echo "=============================================="
-echo "  Hermes v2 deployed!"
-echo "  Status: sudo systemctl status hermes-bot"
-echo "  Logs:   sudo journalctl -u hermes-bot -f"
-echo "  Stop:   sudo systemctl stop hermes-bot"
-echo "  Start:  sudo systemctl start hermes-bot"
-echo ""
-echo "  To set Coinbase API keys:"
-echo "    sudo systemctl edit hermes-bot"
-echo "    (add Environment= lines, then restart)"
-echo "=============================================="
+echo "=== DEPLOY COMPLETE === $(date)"

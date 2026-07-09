@@ -3,11 +3,18 @@
 Comprehensive invariant checker — covers every failure mode we've ever hit.
 Runs as standalone script and wires into bot cycle via Telegram /audit.
 """
-import sqlite3, json, os, time, subprocess, logging
+import sqlite3, json, os, time, subprocess, logging, sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger("hermes.invariant")
+
+def verify_method_calls(repo):
+    result = subprocess.run(
+        [sys.executable, repo + '/scripts/verify_method_calls.py', repo + '/src/core/loop.py'],
+        capture_output=True, text=True
+    )
+    return 'PASS' if result.returncode == 0 else 'FAIL'
 
 def check_db(path, label):
     issues = []
