@@ -49,6 +49,10 @@ class ExchangeAdapter(ABC):
         """Get the latest cached funding rate for a single asset."""
 
     @abstractmethod
+    async def get_spread(self, asset: str) -> float:
+        """Get the current bid-ask spread percentage."""
+
+    @abstractmethod
     async def fetch_price(self, asset: str) -> float:
         """Get the latest cached price for a single asset."""
 

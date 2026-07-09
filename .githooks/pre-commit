@@ -1,0 +1,4 @@
+#!/bin/bash
+# Hard-coded pre-commit hook: blocks commits with unresolvable method calls
+# Installed permanently in the repo — survives clones if hooks are restored
+exec python3 /opt/hermes-trading-bot/scripts/verify_method_calls.py
