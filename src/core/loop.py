@@ -681,26 +681,6 @@ class TradingLoop:
         ])
         # Position quality sweep: close stale flat/negative positions to free slots
         now_ts = time.time()
-        stale_count = 0
-        for pos in list(exchange.positions.values()):
-            if not pos.entry_time:
-                continue
-            age_min = (now_ts - pos.entry_time.timestamp()) / 60
-            if age_min < 60:
-                continue
-            upnl = getattr(pos, 'unrealized_pnl', 0) or 0
-            if upnl <= 0:
-                logger.info("STALE_POSITION %s: %.0f min upnl=$%+.1f -- closing", pos.asset, age_min, upnl)
-                try:
-                    if upnl < 0:
-                        self.risk.global_loss_streak += 1
-                    exchange.close_position(pos.asset)
-                    self.store.put_state('positions', [])
-                    stale_count += 1
-                except Exception as e:
-                    logger.warning("STALE_POSITION %s close failed: %s", pos.asset, e)
-        if stale_count:
-            logger.info("STALE_POSITION: closed %d position(s) to free capacity", stale_count)
         # Periodic WAL checkpoint every 5 cycles to prevent WAL bloat
         if self._cycle_count % 5 == 0:
             try:
@@ -798,6 +778,15 @@ class TradingLoop:
                         logger.warning("KNIFE_TIMESTOP %s: long held %.0f min >60 min during BTC knife guard -- closing",
                                        asset, age.total_seconds() / 60)
                         await self._close(asset, pos, price, "knife_guard_time_exit", exchange)
+                        return
+
+                # Stale position auto-close: close open >60min with unrealized PnL <= 0
+                if getattr(pos, "entry_time", None):
+                    age_min = (datetime.now(timezone.utc) - pos.entry_time).total_seconds() / 60
+                    upnl = float(getattr(pos, "unrealized_pnl", 0) or 0)
+                    if age_min > 60 and upnl <= 0:
+                        logger.info("STALE_POSITION %s: %.0f min upnl=$%.1f -- closing", asset, age_min, upnl)
+                        await self._close(asset, pos, price, "stale_position", exchange)
                         return
 
         # Dual regime (NotebookLM): primary (200-period) for sizing/risk,
