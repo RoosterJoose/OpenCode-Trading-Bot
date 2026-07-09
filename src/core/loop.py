@@ -353,7 +353,7 @@ class TradingLoop:
             logger.debug("dynamic thresholds: %s", e)
         # Load strategy budget from strategy_budget.py
         self._strategy_budget = {}
-        self._ic_budget_cycle = 0
+        self._strategy_budget = {}      # restored from DB below
         self._block_reasons: dict[str, int] = {}
         token = self.config.get("telegram", {}).get("bot_token") or os.environ.get("HERMES_TELEGRAM_BOT_TOKEN", "")
         chat_id = self.config.get("telegram", {}).get("chat_id") or os.environ.get("HERMES_TELEGRAM_CHAT_ID", "")
