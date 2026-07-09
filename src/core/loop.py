@@ -692,7 +692,8 @@ class TradingLoop:
             if upnl <= 0:
                 logger.info("STALE_POSITION %s: %.0f min upnl=$%+.1f -- closing", pos.asset, age_min, upnl)
                 try:
-                    self.risk._update_global_state(pos, pnl_dollars=upnl, close_reason='stale_position')
+                    if upnl < 0:
+                        self.risk.global_loss_streak += 1
                     exchange.close_position(pos.asset)
                     self.store.put_state('positions', [])
                     stale_count += 1
