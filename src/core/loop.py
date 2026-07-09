@@ -679,6 +679,27 @@ class TradingLoop:
             }
             for p in exchange.positions.values()
         ])
+        # Position quality sweep: close stale flat/negative positions to free slots
+        now_ts = time.time()
+        stale_count = 0
+        for pos in list(exchange.positions.values()):
+            if not pos.entry_time:
+                continue
+            age_min = (now_ts - pos.entry_time.timestamp()) / 60
+            if age_min < 60:
+                continue
+            upnl = getattr(pos, 'unrealized_pnl', 0) or 0
+            if upnl <= 0:
+                logger.info("STALE_POSITION %s: %.0f min upnl=$%+.1f -- closing", pos.asset, age_min, upnl)
+                try:
+                    self.risk._update_global_state(pos, pnl_dollars=upnl, close_reason='stale_position')
+                    exchange.close_position(pos.asset)
+                    self.store.put_state('positions', [])
+                    stale_count += 1
+                except Exception as e:
+                    logger.warning("STALE_POSITION %s close failed: %s", pos.asset, e)
+        if stale_count:
+            logger.info("STALE_POSITION: closed %d position(s) to free capacity", stale_count)
         # Periodic WAL checkpoint every 5 cycles to prevent WAL bloat
         if self._cycle_count % 5 == 0:
             try:
