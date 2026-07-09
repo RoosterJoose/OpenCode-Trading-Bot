@@ -197,8 +197,8 @@ class TelegramBot:
     async def _cmd_audit(self):
         await self._send("Running full audit...")
         proc = await asyncio.create_subprocess_exec(
-            "/opt/hermes-trading-bot/.venv/bin/python",
-            "/opt/hermes-trading-bot/scripts/telegram_audit.py",
+            "sudo python3",
+            "/opt/hermes-trading-bot/scripts/invariant_sweep.py",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
         result = stdout.decode().strip()
