@@ -102,35 +102,69 @@ ALLOWED_SIGNAL_KEYS = {
 
 
 class AltfinsAdapter:
-    def __init__(self, api_key: str, check_interval: int = 300):
-        self.api_key = api_key
+    def __init__(self, api_keys: list[str], check_interval: int = 300):
+        self.api_keys = api_keys if isinstance(api_keys, list) else [api_keys]
+        self._active_key_idx = 0
         self.check_interval = check_interval
         self._http = httpx.AsyncClient(timeout=TIMEOUT)
         self._last_fetch: Optional[datetime] = None
         self._cached_signals: list[Signal] = []
         self._cached_indicators: dict[str, dict] = {}
 
+    @property
+    def api_key(self) -> str:
+        return self.api_keys[self._active_key_idx]
+
+    def _rotate_key(self):
+        """Rotate to next API key. Logs the rotation."""
+        old_idx = self._active_key_idx
+        self._active_key_idx = (self._active_key_idx + 1) % len(self.api_keys)
+        logger.info("Altfins: rotated from key %d to key %d (total keys: %d)",
+                     old_idx, self._active_key_idx, len(self.api_keys))
+        return self.api_key
+
+    async def _check_and_rotate(self, resp):
+        """Check if response is 429 (quota exhausted) and rotate if so."""
+        if resp.status_code == 429 and len(self.api_keys) > 1:
+            logger.warning("Altfins: key %d exhausted (429), rotating to key %d",
+                          self._active_key_idx,
+                          (self._active_key_idx + 1) % len(self.api_keys))
+            self._rotate_key()
+            return True
+        return False
+
     async def _post(self, path: str, body: dict) -> Any:
-        resp = await self._http.post(
-            f"{API}{path}",
-            json=body,
-            headers={"X-API-KEY": self.api_key, "Content-Type": "application/json"},
-        )
-        if resp.status_code >= 400:
-            logger.warning("Altfins POST %s: HTTP %d %s", path, resp.status_code, resp.text[:200])
-        resp.raise_for_status()
-        return resp.json()
+        for attempt in range(len(self.api_keys)):
+            resp = await self._http.post(
+                f"{API}{path}",
+                json=body,
+                headers={"X-API-KEY": self.api_key, "Content-Type": "application/json"},
+            )
+            if resp.status_code >= 400:
+                logger.warning("Altfins POST %s: HTTP %d %s", path, resp.status_code, resp.text[:200])
+            if await self._check_and_rotate(resp):
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        # All keys exhausted
+        logger.error("Altfins: ALL API keys exhausted (429)")
+        raise Exception("All altFINS API keys exhausted")
 
     async def _get(self, path: str, params: Optional[dict] = None) -> Any:
-        resp = await self._http.get(
-            f"{API}{path}",
-            params=params,
-            headers={"X-API-KEY": self.api_key},
-        )
-        if resp.status_code >= 400:
-            logger.warning("Altfins GET %s: HTTP %d %s", path, resp.status_code, resp.text[:200])
-        resp.raise_for_status()
-        return resp.json()
+        for attempt in range(len(self.api_keys)):
+            resp = await self._http.get(
+                f"{API}{path}",
+                params=params,
+                headers={"X-API-KEY": self.api_key},
+            )
+            if resp.status_code >= 400:
+                logger.warning("Altfins GET %s: HTTP %d %s", path, resp.status_code, resp.text[:200])
+            if await self._check_and_rotate(resp):
+                continue
+            resp.raise_for_status()
+            return resp.json()
+        logger.error("Altfins: ALL API keys exhausted for GET")
+        raise Exception("All keys exhausted")
 
     async def fetch_screener(self, symbols: list[str]) -> dict[str, dict]:
         """Fetch expanded indicators for our asset universe."""

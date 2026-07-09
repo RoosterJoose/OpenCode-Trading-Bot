@@ -148,10 +148,16 @@ class TradingLoop:
             except NotImplementedError:
                 pass
 
-        altfins_key = self.config.get("altfins", {}).get("api_key", "") or os.environ.get("ALTFINS_API_KEY", "")
-        if altfins_key:
-            self._altfins = AltfinsAdapter(altfins_key)
-            logger.info("Altfins: enabled")
+        altfins_keys = []
+        key1 = self.config.get("altfins", {}).get("api_key", "") or os.environ.get("ALTFINS_API_KEY", "")
+        if key1:
+            altfins_keys.append(key1)
+        key2 = os.environ.get("ALTFINS_API_KEY_2", "")
+        if key2:
+            altfins_keys.append(key2)
+        if altfins_keys:
+            self._altfins = AltfinsAdapter(altfins_keys)
+            logger.info("Altfins: enabled with %d key(s)", len(altfins_keys))
         else:
             logger.info("Altfins: disabled (no API key)")
         try:
