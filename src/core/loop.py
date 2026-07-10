@@ -444,7 +444,7 @@ class TradingLoop:
         #   - Signal Feed (1D): every 360 cycles (6h) — daily confirmation only
         self._altfins_cycle += 1
         if self._altfins:
-            if self._altfins_cycle % 60 == 0:
+            if self._altfins_cycle % 192 == 0:
                 try:
                     indicator_sigs = await self._altfins.fetch_indicators_as_signals(self.assets)
                     for sig in indicator_sigs:
