@@ -646,7 +646,26 @@ class TradingLoop:
         if self._cycle_count % 60 == 0:
             self._block_reasons = {}
 
-        # Self-heal 4: loss streak auto-reset — if stale and blocked, clear
+        # Self-heal 4a: WR halt auto-clear — check if risk_recent_outcomes shows stale WR halt
+        ro_key = self.store.get_state("risk_recent_outcomes")
+        if ro_key:
+            try:
+                outcomes = json.loads(ro_key)
+                if len(outcomes) >= 10:
+                    wr = sum(outcomes) / len(outcomes)
+                    if wr < 0.30 and self._cycle_count > 60:
+                        stall_cycles = self._cycle_count - getattr(self, "_wr_halt_first_seen", 0)
+                        if not getattr(self, "_wr_halt_first_seen", None):
+                            self._wr_halt_first_seen = self._cycle_count
+                        if stall_cycles > 60:
+                            logger.warning("SELF-HEAL: WR halt %.0f%% stale for %d cycles — clearing", wr*100, stall_cycles)
+                            self.risk._recent_outcomes = []
+                            self.store.put_state("risk_recent_outcomes", "[]")
+                            self._wr_halt_first_seen = 0
+            except Exception:
+                pass
+
+        # Self-heal 4b: loss streak auto-reset — if stale and blocked, clear
         gs = getattr(self.risk, 'global_loss_streak', 0)
         if gs >= 5 and self._cycle_count - self._last_entry_diag_cycle > 30:
             logger.warning("SELF-HEAL: GS=%d stale for 30+ cycles — clearing", gs)
