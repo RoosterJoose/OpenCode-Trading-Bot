@@ -901,7 +901,7 @@ class TradingLoop:
                 mr_min = 0.55
                 if confidence < mr_min or strat.name() != "mr":
                     continue
-            # Absolute floor for non-MR strategies (trend/donchian/need >= 0.70 regardless of global MIN)
+            # Absolute floor for non-MR strategies (trend/need >= 0.70 regardless of global MIN)
             if strat.name() != "mr" and confidence < 0.70:
                 logger.debug("%s %s: trend confidence %.2f < 0.70 floor", strat.name(), asset, confidence)
                 continue
@@ -976,7 +976,7 @@ class TradingLoop:
             self.store.put_state(f"last_signal_{asset}", signal_entry)
 
             # Execute paper trade
-            if strat.name() == "mr" or strat.name() == "donchian":
+            if strat.name() == "mr":
                 logger.info("ENTRY_ATTEMPT %s %s conf=%.2f qty=%.4f stop=%.2f entry=%.2f",
                              asset, side.value, confidence, qty, stop_price, entry_price)
             order = Order(

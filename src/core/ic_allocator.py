@@ -109,7 +109,6 @@ def compute_weights(db_path: str = DB_PATH) -> dict:
 
     conn.close()
 
-    # Build weights from IC strats (excl donchian)
     weights = {s: sl.score for s, sl in sleeves.items()}
     total = sum(weights.values())
     if total <= 0:
