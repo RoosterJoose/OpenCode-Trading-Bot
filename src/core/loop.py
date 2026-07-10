@@ -444,7 +444,7 @@ class TradingLoop:
         #   - Signal Feed (1D): every 360 cycles (6h) — daily confirmation only
         self._altfins_cycle += 1
         if self._altfins:
-            if self._altfins_cycle % 5 == 0:
+            if self._altfins_cycle % 60 == 0:
                 try:
                     indicator_sigs = await self._altfins.fetch_indicators_as_signals(self.assets)
                     for sig in indicator_sigs:
@@ -518,7 +518,7 @@ class TradingLoop:
             permit_info = {}
             if self._altfins:
                 altfins_indicators = self._altfins._cached_indicators
-                permit_info = await self._altfins.check_permit_usage()
+                if self._altfins_cycle % 360 == 0: permit_info = await self._altfins.check_permit_usage()
             snapshot = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "prices": dict(getattr(hl, "_latest_prices", {})),
