@@ -270,10 +270,10 @@ class TradingLoop:
             raw = self.store.get_state("risk_global_loss_streak")
             if raw:
                 self.risk._global_loss_streak = int(raw)
-            raw = self.store.get_state("risk_recent_outcomes")
-            if raw:
-                restored = json.loads(raw) if isinstance(raw, str) else raw
-                self.risk._recent_outcomes = list(restored)
+            # Do NOT restore _recent_outcomes — circuit breakers rebuild naturally from live trades.
+            # Stale WR halts persisted in DB have blocked the bot for hours multiple times.
+            self.risk._recent_outcomes = []
+            self.store.put_state("risk_recent_outcomes", "[]")
             if self.risk._recent_outcomes or self.risk._consecutive_losses:
                 logger.info(
                     "Restored risk state: %d outcomes, %d consecutive-loss entries, global streak=%d",
@@ -360,7 +360,6 @@ class TradingLoop:
         # Load strategy budget from strategy_budget.py
         self._strategy_budget = {}
         self._strategy_budget = {}      # restored from DB below
-        self._block_reasons: dict[str, int] = {}
         token = self.config.get("telegram", {}).get("bot_token") or os.environ.get("HERMES_TELEGRAM_BOT_TOKEN", "")
         chat_id = self.config.get("telegram", {}).get("chat_id") or os.environ.get("HERMES_TELEGRAM_CHAT_ID", "")
         self.telegram = TelegramBot(token, chat_id, self.store)
@@ -623,30 +622,7 @@ class TradingLoop:
             except Exception as e:
                 logger.error("IC budget failed: %s", e)
         # Persist risk state + strategy cooldowns (survive restarts)
-        # Self-heal 3: detect dominant block reason — if same reason for 60 cycles, auto-clear
-        if hasattr(self, '_block_reasons') and self._block_reasons:
-            top_reason = max(self._block_reasons, key=self._block_reasons.get)
-            top_count = self._block_reasons[top_reason]
-            total_blocks = sum(self._block_reasons.values())
-            if total_blocks >= 30 and top_count / max(total_blocks, 1) > 0.8:
-                logger.warning("SELF-HEAL: %s blocks dominate (%.0f%%) for %d cycles — clearing", 
-                               top_reason, top_count/total_blocks*100, total_blocks)
-                if "wr_halt" in top_reason:
-                    self.risk._recent_outcomes = []
-                    self.store.put_state("risk_recent_outcomes", "[]")
-                elif "gs_halt" in top_reason or "loss_streak" in top_reason:
-                    self.risk.global_loss_streak = 0
-                    self.store.put_state("risk_global_loss_streak", "0")
-                elif "lev_halt" in top_reason and self._block_reasons.get(top_reason, 0) > 60:
-                    logger.warning("SELF-HEAL: lev_halt stale for 30+ cycles — clearing")
-                    self.store.put_state("equity_snapshots", json.dumps({"eq": 0, "peak": 0}))
-                self._block_reasons = {}
-        
-        # Clear block reasons periodically to prevent unbounded growth
-        if self._cycle_count % 60 == 0:
-            self._block_reasons = {}
-
-        # Self-heal 4a: WR halt auto-clear — check if risk_recent_outcomes shows stale WR halt
+        # Self-heal: detect stale blocking state — if WR halt active >60 cycles, auto-clear
         ro_key = self.store.get_state("risk_recent_outcomes")
         if ro_key:
             try:
@@ -665,10 +641,10 @@ class TradingLoop:
             except Exception:
                 pass
 
-        # Self-heal 4b: loss streak auto-reset — if stale and blocked, clear
+        # Self-heal: loss streak auto-reset — if stale and blocked, clear
         gs = getattr(self.risk, 'global_loss_streak', 0)
-        if gs >= 5 and self._cycle_count - self._last_entry_diag_cycle > 30:
-            logger.warning("SELF-HEAL: GS=%d stale for 30+ cycles — clearing", gs)
+        if gs >= 5 and self._cycle_count - getattr(self, '_last_entry_diag_cycle', 0) > 120:
+            logger.warning("SELF-HEAL: GS=%d stale for 120+ cycles — clearing", gs)
             self._global_loss_streak = 0
             self.risk.global_loss_streak = 0
             self.store.put_state("risk_global_loss_streak", "0")
