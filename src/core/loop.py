@@ -742,14 +742,6 @@ class TradingLoop:
             if upnl_val > (getattr(pos, 'peak_upnl', 0) or 0):
                 pos.peak_upnl = upnl_val
 
-        # Position concentration check: max 50% equity in one position
-        if pos:
-            notional = abs(pos.size) * (pos.entry_price if pos.entry_price > 0 else 1)
-            max_notional = exchange.equity * 0.50 if hasattr(exchange, 'equity') else 999999
-            if notional > max_notional:
-                logger.warning("CONCENTRATION_HALT %s: notional=%.0f > 50%%%% eq=%.0f", asset, notional, max_notional)
-                return
-
         if pos and exchange.check_liquidation(asset):
             logger.warning("%s liquidated", asset)
             return
@@ -809,6 +801,14 @@ class TradingLoop:
                         logger.info("PORTFOLIO_SWEEP %s: stale %.0f min upnl=$%.1f -- closing", asset, age_min, upnl)
                         await self._close(asset, pos, price, "portfolio_stale", exchange)
                         return
+
+        # Position concentration check: max 50% equity in one position (after sweep)
+        if pos:
+            notional = abs(pos.size) * (pos.entry_price if pos.entry_price > 0 else 1)
+            max_notional = exchange.equity * 0.50 if hasattr(exchange, 'equity') else 999999
+            if notional > max_notional:
+                logger.warning("CONCENTRATION_HALT %s: notional=%.0f > 50%%%% eq=%.0f", asset, notional, max_notional)
+                return
 
         # Dual regime (NotebookLM): primary (200-period) for sizing/risk,
         # secondary (50-period) for entry direction
