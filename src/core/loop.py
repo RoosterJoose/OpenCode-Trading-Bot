@@ -31,6 +31,7 @@ from src.adapters.base import ExchangeAdapter
 from src.adapters.coinbase_advanced import CoinbaseAdvancedAdapter
 from src.adapters.kalshi import KalshiAdapter
 from src.adapters.paper_perp import PaperPerpExchange
+from src.core.event_kill import EventKillSwitch
 from src.core.telegram_bot import TelegramBot
 from src.core.intents import TradeIntent
 from src.core.perp_risk import PerpRiskManager
@@ -107,6 +108,7 @@ class TradingLoop:
         self._kalshi_funding = {}
         self._strategy_budget = {}
         self._ic_budget_cycle = 0
+        self._event_kill = EventKillSwitch()
         self._block_reasons: dict[str, int] = {}
         token = self.config.get("telegram", {}).get("bot_token") or os.environ.get("HERMES_TELEGRAM_BOT_TOKEN", "")
         chat_id = self.config.get("telegram", {}).get("chat_id") or os.environ.get("HERMES_TELEGRAM_CHAT_ID", "")
@@ -193,6 +195,11 @@ class TradingLoop:
                 self._kalshi = None
         else:
             logger.info("Kalshi: disabled (no API key)")
+        try:
+            self._event_kill.refresh()
+        except Exception as e:
+            logger.warning("EventKill: init failed (%s), continuing without it", e)
+
 
         ws_task = asyncio.create_task(hl.connect_ws())
 
@@ -863,6 +870,12 @@ class TradingLoop:
 
         cl_ok, cl_msg = self.risk.consecutive_loss_allows(asset)
         if not cl_ok:
+            return
+
+        # Event kill: block entries around high-impact economic events
+        blocked = self._event_kill.should_block()
+        if blocked:
+            logger.info("ENTRY_DIAG %s: skip -- event: %s (%s)", asset, blocked["event"], blocked["currency"])
             return
 
         # Evaluate entries
