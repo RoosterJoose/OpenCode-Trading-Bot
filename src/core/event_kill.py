@@ -15,26 +15,55 @@ BLOCK_BEFORE = 15  # minutes before event
 BLOCK_AFTER = 15   # minutes after event
 CACHE_HOURS = 6    # refresh interval
 
-HIGH_IMPACT_FILTERS = [
-    "CPI", "FOMC", "Non-Farm", "Employment", "GDP", "Unemployment Rate",
-    "Fed Interest Rate", "NFP", "PPI", "Retail Sales", "Industrial Production",
-    "Consumer Confidence", "ISM", "PMI", "Housing",
-    "Consumer Price Index", "Producer Price Index",
+HIGH_IMPACT_KEYWORDS = [
+    "cpi", "fomc", "non-farm", "nonfarm", "employment", "gdp",
+    "unemployment rate", "fed interest", "nfp", "ppi",
+    "retail sales", "industrial production",
+    "consumer confidence", "ism manufact", "ism serv",
+    "pmi", "housing starts", "consumer price", "producer price",
+    "initial claims", "jobless claims",
+    "philadelphia fed", "empire state",
+    "average hourly earnings",
 ]
 
 
 def _is_high_impact(event_name: str) -> bool:
-    name = event_name.lower()
-    keywords = [
-        "cpi", "fomc", "non-farm", "nonfarm", "employment", "gdp",
-        "unemployment", "fed interest rate", "nfp", "ppi",
-        "retail sales", "industrial production",
-        "consumer confidence", "ism manufact", "ism serv",
-        "pmi", "housing", "consumer price", "producer price",
-        "initial claims", "jobless claims",
-        "philadelphia fed", "empire state",
-    ]
-    return any(k in name for k in keywords)
+    name = event_name.lower().strip()
+    name = re.sub(r"[^a-z0-9\s]", "", name)
+    return any(kw in name for kw in HIGH_IMPACT_KEYWORDS)
+
+
+def _clean_html(html_text: str) -> str:
+    """Remove HTML tags from a string."""
+    return re.sub(r"<[^>]+>", "", html_text).strip()
+
+
+def _parse_time(time_str: str) -> str:
+    """Normalize FF time format to HH:MM (24-hour).
+    Handles '9:00am', '1:00pm', '08:30', 'All Day', etc.
+    """
+    t = time_str.strip()
+    t = re.sub(r"<[^>]+>", "", t).strip()
+    if not t or "All Day" in t:
+        return ""
+
+    is_pm = "pm" in t.lower()
+    is_am = "am" in t.lower()
+    # Remove am/pm for parsing
+    clean = re.sub(r"[ap]\.?m\.?", "", t, flags=re.IGNORECASE).strip()
+    parts = clean.split(":")
+    if len(parts) >= 2:
+        try:
+            h = int(parts[0])
+            m = int(re.sub(r"[^\d]", "", parts[1])[:2])
+            if is_pm and h < 12:
+                h += 12
+            if is_am and h == 12:
+                h = 0
+            return f"{h:02d}:{m:02d}"
+        except ValueError:
+            pass
+    return clean
 
 
 class EventKillSwitch:
@@ -44,7 +73,7 @@ class EventKillSwitch:
         self._fetch_interval = CACHE_HOURS * 3600
 
     def _fetch_ff_calendar(self) -> list[dict]:
-        """Fetch and parse ForexFactory calendar. Returns list of high-impact events."""
+        """Fetch and parse ForexFactory calendar HTML for high-impact events."""
         try:
             import urllib.request
             req = urllib.request.Request(
@@ -58,89 +87,118 @@ class EventKillSwitch:
             return []
 
         events = []
-        # Parse date headers — FF uses <td class="calendar__date"> with data-date="YYYY-MM-DD"
-        dates = {}
+        current_date = ""
+
+        # Find each event row by data-event-id
         for m in re.finditer(
-            r'<td[^>]*class="calendar__date"[^>]*data-date="(\d{4}-\d{2}-\d{2})"',
-            html,
+            r'<tr[^>]*data-event-id="(\d+)"[^>]*class="calendar__row[^"]*"[^>]*>(.*?)</tr>',
+            html, re.DOTALL,
         ):
-            # Find the tbody following this date
-            after = html[m.end():]
-            tbody_match = re.search(r'<tbody[^>]*>(.*?)</tbody>', after, re.DOTALL)
-            if tbody_match:
-                date_str = m.group(1)
-                dates[date_str] = tbody_match.group(1)
+            row_id = m.group(1)
+            row_html = m.group(2)
 
-        for date_str, tbody in dates.items():
-            # Parse each event row in this tbody
-            for row_match in re.finditer(
-                r'<tr[^>]*class="calendar__row"[^>]*data-event-id="(\d+)"(.*?)</tr>',
-                tbody, re.DOTALL,
-            ):
-                row = row_match.group(2)
-
-                # Impact level
-                is_high = bool(re.search(r'impact--red|impact--orange', row))
-                if not is_high:
-                    continue
-
-                # Time
-                time_m = re.search(
-                    r'<td[^>]*class="calendar__time"[^>]*>(.*?)</td>', row, re.DOTALL
+            # Check for new date (row has calendar__row--new-day class)
+            if 'calendar__row--new-day' in m.group(0):
+                date_m = re.search(
+                    r'<td[^>]*class="calendar__cell calendar__date"[^>]*>.*?<span[^>]*class="date"[^>]*>(.*?)</span>',
+                    row_html, re.DOTALL,
                 )
-                time_str = ""
-                if time_m:
-                    time_str = re.sub(r'<[^>]+>', '', time_m.group(1)).strip()
-
-                # Currency
-                cur_m = re.search(
-                    r'<td[^>]*class="calendar__currency"[^>]*>(.*?)</td>', row, re.DOTALL
+                if date_m:
+                    current_date = date_m.group(1).strip()
+                    current_date = re.sub(r"<[^>]+>", "", current_date).strip()
+            else:
+                # Check if there's a date cell anyway (first row of each date group)
+                date_m = re.search(
+                    r'<td[^>]*class="calendar__cell calendar__date"[^>]*>', row_html
                 )
-                currency = cur_m.group(1).strip() if cur_m else ""
+                if date_m:
+                    # Extract just the date part
+                    date_span = re.search(
+                        r'<span[^>]*class="date"[^>]*>(.*?)</span>', row_html, re.DOTALL
+                    )
+                    if date_span:
+                        current_date = re.sub(r"<[^>]+>", "", date_span.group(1)).strip()
 
-                # Event name
-                ev_m = re.search(
-                    r'<td[^>]*class="calendar__event"[^>]*>(.*?)</td>', row, re.DOTALL
-                )
-                event_name = ""
-                if ev_m:
-                    event_name = re.sub(r'<[^>]+>', '', ev_m.group(1)).strip()
-                    event_name = event_name.replace("&amp;", "&").replace("&#039;", "'")
+            if not current_date:
+                continue
 
-                if not event_name or not time_str:
-                    continue
+            # Impact — check for red (high) or orange (medium-high)
+            is_high = bool(re.search(r"icon--ff-impact-red", row_html))
+            is_medium = bool(re.search(r"icon--ff-impact-ora", row_html))
 
-                # Parse time
-                try:
-                    now = datetime.now(timezone.utc)
-                    event_dt = datetime.strptime(
-                        f"{date_str} {time_str}", "%Y-%m-%d %H:%M"
-                    ).replace(tzinfo=timezone.utc)
+            # Time
+            time_m = re.search(
+                r'<td[^>]*class="calendar__cell calendar__time"[^>]*>(.*?)</td>',
+                row_html, re.DOTALL,
+            )
+            time_str = _parse_time(time_m.group(1)) if time_m else ""
 
-                    # Events not yet passed or still within block window
-                    if event_dt < now - timedelta(minutes=BLOCK_AFTER + 60):
+            # Currency
+            cur_m = re.search(
+                r'<td[^>]*class="calendar__cell calendar__currency"[^>]*>(.*?)</td>',
+                row_html, re.DOTALL,
+            )
+            currency = _clean_html(cur_m.group(1)) if cur_m else ""
+
+            # Event name
+            ev_m = re.search(
+                r'<td[^>]*class="calendar__cell calendar__event"[^>]*>(.*?)</td>',
+                row_html, re.DOTALL,
+            )
+            event_name = _clean_html(ev_m.group(1)) if ev_m else ""
+            event_name = event_name.replace("&amp;", "&").replace("&#039;", "'").replace("&nbsp;", " ")
+
+            if not event_name or not time_str or not is_high:
+                continue
+
+            # Only US events matter for our crypto portfolio
+            if currency not in ("USD",):
+                continue
+
+            # Parse date — current_date is like "Fri Jul 10"
+            try:
+                now = datetime.now(timezone.utc)
+                # Parse "Fri Jul 10" — we need to add the year
+                date_parts = current_date.split()
+                if len(date_parts) >= 3:
+                    month = date_parts[-2]
+                    day = date_parts[-1]
+                    # Clean day (remove ordinal suffixes like 10th)
+                    day = re.sub(r"[^\d]", "", day)
+                    year = now.year
+                    # Handle December -> January rollover
+                    dt_str = f"{month} {day} {year} {time_str}"
+                    event_dt = datetime.strptime(dt_str, "%b %d %Y %H:%M")
+                    event_dt = event_dt.replace(tzinfo=timezone.utc)
+
+                    # If event seems more than 2 weeks in the past, skip
+                    if event_dt < now - timedelta(days=14):
                         continue
-                except ValueError:
+                    # If event seems more than 2 weeks in the future, skip (we reload weekly)
+                    if event_dt > now + timedelta(days=14):
+                        continue
+                else:
                     continue
+            except (ValueError, IndexError) as e:
+                logger.debug("FF date parse error: %s %s", current_date, e)
+                continue
 
-                events.append({
-                    "datetime": event_dt,
-                    "currency": currency,
-                    "event": event_name,
-                    "impact": "high",
-                    "date": date_str,
-                    "time": time_str,
-                })
+            events.append({
+                "datetime": event_dt,
+                "currency": currency,
+                "event": event_name,
+                "impact": "high",
+                "date": current_date,
+                "time": time_str,
+                "id": row_id,
+            })
 
-                _event_str = event_name[:80]
-                logger.debug("FF event: %s %s %s %s", date_str, time_str, currency, _event_str)
-
+        logger.debug("FF: %d high-impact USD events found in HTML", len(events))
         return events
 
     def refresh(self) -> int:
         """Fetch calendar and cache high-impact events. Returns count."""
         raw = self._fetch_ff_calendar()
-        # Filter to only high-impact events
         self._events = [
             e for e in raw
             if _is_high_impact(e["event"])
