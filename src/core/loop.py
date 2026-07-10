@@ -987,9 +987,8 @@ class TradingLoop:
                     pos.regime = regime.value if hasattr(regime, "value") else str(regime)
                     pos.entry_regime = pos.regime
                 self.risk.record_position_open(asset)
-                asyncio.ensure_future(self.notifier.position_opened(
-                    asset, side.value.upper(), entry_price, qty, lev, confidence, strat.name(),
-                ))
+                # Trade notifications suppressed — individual trade messages cause Telegram spam
+
                 logger.info(
                     "PAPER %s %s qty=%.4f @ %g stop=%g lev=%.1fx risk=$%.0f conf=%.2f altfins=%d",
                     side.value.upper(), asset, qty, entry_price, stop_price, lev,
@@ -1313,9 +1312,6 @@ class TradingLoop:
             # Reduce position size; move stop to breakeven
             pos.size -= close_qty
             pos.stop_loss = pos.entry_price
-            asyncio.ensure_future(self.notifier.position_closed(
-                asset, pos.side.value.upper(), pos.entry_price, price, pnl_dollars, reason, pos.strategy or "",
-            ))
             return
 
         # Full close (original logic)
@@ -1358,9 +1354,7 @@ class TradingLoop:
         }
         self.store.save_trade(trade)
 
-        asyncio.ensure_future(self.notifier.position_closed(
-            asset, pos.side.value.upper(), pos.entry_price, price, pnl_dollars, reason, pos.strategy or "",
-        ))
+
 
     async def _maybe_reflect(self, exchange: PaperPerpExchange):
         now = datetime.now(timezone.utc)
