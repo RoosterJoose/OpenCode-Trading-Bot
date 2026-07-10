@@ -274,7 +274,7 @@ class PerpRiskManager:
 
     def record_trade(self, asset: str, pnl_pct: float, pnl_dollars: float, exit_reason: str = ""):
         if pnl_pct < 0:
-            if exit_reason != "knife_guard_time_exit":
+            if exit_reason not in ("knife_guard_time_exit", "portfolio_max_age", "portfolio_peak_decay", "portfolio_stale"):
                 self._consecutive_losses[asset] += 1
                 self._global_loss_streak += 1
         else:

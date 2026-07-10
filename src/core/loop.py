@@ -721,10 +721,11 @@ class TradingLoop:
         oi_vel = self.risk.oi_velocity(asset)
         altfins_sigs = self.signal_cache.get(asset, [])
 
-        # Track MAE and MFE: Max Adverse / Favorable Excursion
+        # Track MAE, MFE, and peak unrealized PnL
         if pos:
             if not getattr(pos, 'mae_pct', None): pos.mae_pct = 0.0
             if not getattr(pos, 'mfe_pct', None): pos.mfe_pct = 0.0
+            if not getattr(pos, 'peak_upnl', None): pos.peak_upnl = 0.0
             if pos.side == Side.LONG:
                 worst = pos.entry_price - price
                 best = price - pos.entry_price
@@ -737,6 +738,9 @@ class TradingLoop:
                 pos.mae_pct = current_mae
             if current_mfe > (getattr(pos, 'mfe_pct', 0) or 0):
                 pos.mfe_pct = current_mfe
+            upnl_val = float(getattr(pos, 'unrealized_pnl', 0) or 0)
+            if upnl_val > (getattr(pos, 'peak_upnl', 0) or 0):
+                pos.peak_upnl = upnl_val
 
         # Position concentration check: max 50% equity in one position
         if pos:
@@ -780,13 +784,30 @@ class TradingLoop:
                         await self._close(asset, pos, price, "knife_guard_time_exit", exchange)
                         return
 
-                # Stale position auto-close: close open >60min with unrealized PnL <= 0
+                # Portfolio health sweep: close positions past their edge
                 if getattr(pos, "entry_time", None):
                     age_min = (datetime.now(timezone.utc) - pos.entry_time).total_seconds() / 60
                     upnl = float(getattr(pos, "unrealized_pnl", 0) or 0)
+                    peak = float(getattr(pos, "peak_upnl", 0) or 0)
+
+                    # A. Max age: any position open >12h gets closed
+                    if age_min > 720:
+                        logger.info("PORTFOLIO_SWEEP %s: %.0f min max age exceeded -- closing", asset, age_min)
+                        await self._close(asset, pos, price, "portfolio_max_age", exchange)
+                        return
+
+                    # B. Peak decay: profitable position decayed >50% from peak
+                    if peak > 0:
+                        decay_pct = (peak - upnl) / peak * 100
+                        if upnl > 0 and decay_pct > 50:
+                            logger.info("PORTFOLIO_SWEEP %s: upnl=$%.1f peak=$%.1f decay=%.0f%% -- closing", asset, upnl, peak, decay_pct)
+                            await self._close(asset, pos, price, "portfolio_peak_decay", exchange)
+                            return
+
+                    # C. Stale: open >60min with zero or negative PnL
                     if age_min > 60 and upnl <= 0:
-                        logger.info("STALE_POSITION %s: %.0f min upnl=$%.1f -- closing", asset, age_min, upnl)
-                        await self._close(asset, pos, price, "stale_position", exchange)
+                        logger.info("PORTFOLIO_SWEEP %s: stale %.0f min upnl=$%.1f -- closing", asset, age_min, upnl)
+                        await self._close(asset, pos, price, "portfolio_stale", exchange)
                         return
 
         # Dual regime (NotebookLM): primary (200-period) for sizing/risk,
