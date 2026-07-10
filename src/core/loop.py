@@ -119,6 +119,8 @@ class TradingLoop:
         exchange.restore_positions(positions)
         for pos in exchange.positions.values():
             self.risk.record_position_open(pos.asset)
+        # Reconcile _active_positions with exchange state
+        self.risk._active_positions = set(exchange.positions.keys())
         if exchange.positions:
             logger.info("Restored %d paper position(s)", len(exchange.positions))
 
@@ -739,6 +741,7 @@ class TradingLoop:
 
         if pos and exchange.check_liquidation(asset):
             logger.warning("%s liquidated", asset)
+            self.risk.record_position_close(asset)
             return
 
         # Emergency close_all check
