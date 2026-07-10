@@ -9,10 +9,10 @@ DB_PATH = "/opt/hermes-trading-bot/data/hermes.db"
 WINDOWS = {"trend": 20, "mr": 5, "xs_momentum": 15}
 ALL_STRATS = list(WINDOWS.keys())
 MIN_TRADES = 6
-MIN_WEIGHT = 0.05
+MIN_WEIGHT = 0.15
 MAX_WEIGHT = 0.50
 DONCHIAN_STATIC_WEIGHT = 0.15  # static until 30 trades
-STEIN_SHRINKAGE = 0.5  # weight toward long-term average (0=no shrinkage, 1=full)
+STEIN_SHRINKAGE = 0.7  # weight toward long-term average (0=no shrinkage, 1=full)
 TRANSITION_SMOOTHING = 0.3  # fraction toward target per refresh
 
 
