@@ -108,11 +108,6 @@ class MeanReversion(PerpStrategy):
         if not is_oversold and not is_overbought:
             return None
         is_long = is_oversold
-        # NotebookLM round 27: gate MR shorts behind Hurst < 0.5 (sideways chop only)
-        if not is_long and len(candles) >= 100:
-            h = self._hurst([c.close for c in candles])
-            if h >= 0.5:
-                return None
 
         # Asset-specific drift regime (NotebookLM: >60% directional days)
         drift = self._asset_drift(candles)

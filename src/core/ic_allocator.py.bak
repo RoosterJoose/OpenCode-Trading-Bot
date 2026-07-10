@@ -11,6 +11,7 @@ ALL_STRATS = list(WINDOWS.keys())
 MIN_TRADES = 6
 MIN_WEIGHT = 0.15
 MAX_WEIGHT = 0.50
+DONCHIAN_STATIC_WEIGHT = 0.15  # static until 30 trades
 STEIN_SHRINKAGE = 0.7  # weight toward long-term average (0=no shrinkage, 1=full)
 TRANSITION_SMOOTHING = 0.025  # fraction toward target per refresh
 
@@ -48,6 +49,7 @@ def _load_previous_weights(db_path: str) -> dict:
         if raw:
             data = json.loads(raw[0])
             last = data.get("weights", {})
+            last.pop("donchian", None)
             return last
     except Exception:
         pass
@@ -60,6 +62,7 @@ def compute_weights(db_path: str = DB_PATH) -> dict:
 
     # Load previous weights for smoothing
     prev = _load_previous_weights(db_path)
+    prev.pop("donchian", None)
 
     sleeves: dict[str, SleeveStats] = {}
 
@@ -131,3 +134,38 @@ def compute_weights(db_path: str = DB_PATH) -> dict:
         elif v > MAX_WEIGHT:
             norm[s] = MAX_WEIGHT
 
+    # Add donchian at static weight, scale everything else down
+    remaining = 1.0 - DONCHIAN_STATIC_WEIGHT
+    t2 = sum(norm.values())
+    if t2 > 0:
+        for s in list(norm.keys()):
+            norm[s] = round(norm[s] / t2 * remaining, 4)
+    norm["donchian"] = DONCHIAN_STATIC_WEIGHT
+
+    # Ensure all strats present
+    all_strats_all = list(WINDOWS.keys())
+    for s in all_strats_all:
+        if s not in norm:
+            norm[s] = MIN_WEIGHT
+
+    return norm
+
+
+def main():
+    db_path = sys.argv[1] if len(sys.argv) > 1 else DB_PATH
+    w = compute_weights(db_path)
+    budget = {"weights": w, "source": "ic_rollingsharpe_v2", "timestamp": time.time()}
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)",
+        ("strategy_budget", json.dumps(budget)),
+    )
+    conn.commit()
+    conn.close()
+    print("IC Allocator Budget v2:")
+    for k, v in sorted(w.items(), key=lambda x: -x[1]):
+        print(f"  {k}: {v*100:.1f}%")
+
+
+if __name__ == "__main__":
+    main()

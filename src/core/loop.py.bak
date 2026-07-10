@@ -50,6 +50,7 @@ from src.store.sqlite import Store
 from src.strategies.base import PerpStrategy
 from src.strategies.mr import MeanReversion
 from src.strategies.trend import TrendFollow
+from src.strategies.donchian import DonchianBreakout
 from src.strategies.xs_momentum import CrossSectionalMomentum
 from src.strategies.momentum import DriftMomentum
 
@@ -82,6 +83,7 @@ class TradingLoop:
         self.strategies: list[PerpStrategy] = [
             MeanReversion(signal_tracker=self.signal_tracker),
             TrendFollow(signal_tracker=self.signal_tracker),
+            DonchianBreakout(signal_tracker=self.signal_tracker),
             CrossSectionalMomentum(signal_tracker=self.signal_tracker),
             DriftMomentum(signal_tracker=self.signal_tracker),
         ]
