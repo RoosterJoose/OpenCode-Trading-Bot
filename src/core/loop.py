@@ -1354,6 +1354,8 @@ class TradingLoop:
 
         pnl_dollars = pos.unrealized_pnl * close_pct
         r_mult = ((price - pos.entry_price) / pos.entry_price * pos.leverage) if pos.entry_price > 0 else 0.0
+        if pos.side == Side.SHORT:
+            r_mult = -r_mult
 
         if close_pct < 1.0:
             # Partial close (scale-out): close_pct of position, leave the rest
