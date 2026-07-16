@@ -118,13 +118,15 @@ class Store:
 
                 CREATE TABLE IF NOT EXISTS candles (
                     asset TEXT NOT NULL,
+                    interval TEXT DEFAULT '1h',
                     timestamp REAL NOT NULL,
                     open REAL,
                     high REAL,
                     low REAL,
                     close REAL,
                     volume REAL,
-                    PRIMARY KEY (asset, timestamp)
+                    fetched_at TEXT,
+                    PRIMARY KEY (asset, interval, timestamp)
                 );
                 CREATE INDEX IF NOT EXISTS idx_param_changes_status ON parameter_changes(status);
 
@@ -329,24 +331,24 @@ class Store:
                 ).fetchall()
             return [dict(r) for r in rows]
 
-    def save_candles(self, asset: str, candles: list) -> None:
+    def save_candles(self, asset: str, candles: list, interval: str = "1h") -> None:
         with self._lock:
             for cdl in candles[-300:]:
                 self._conn.execute(
-                    "INSERT OR REPLACE INTO candles (asset, timestamp, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (asset, cdl.timestamp, cdl.open, cdl.high, cdl.low, cdl.close, cdl.volume),
+                    "INSERT OR REPLACE INTO candles (asset, interval, timestamp, open, high, low, close, volume, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (asset, interval, cdl.timestamp, cdl.open, cdl.high, cdl.low, cdl.close, cdl.volume, datetime.now(timezone.utc).isoformat()),
                 )
             self._conn.execute(
-                "DELETE FROM candles WHERE asset = ? AND timestamp NOT IN (SELECT timestamp FROM candles WHERE asset = ? ORDER BY timestamp DESC LIMIT 300)",
-                (asset, asset),
+                "DELETE FROM candles WHERE asset = ? AND interval = ? AND timestamp NOT IN (SELECT timestamp FROM candles WHERE asset = ? AND interval = ? ORDER BY timestamp DESC LIMIT 300)",
+                (asset, interval, asset, interval),
             )
             self._conn.commit()
 
-    def load_candles(self, asset: str, max_bars: int = 250) -> list:
+    def load_candles(self, asset: str, max_bars: int = 250, interval: str = "1h") -> list:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM candles WHERE asset = ? ORDER BY timestamp DESC LIMIT ?",
-                (asset, max_bars),
+                "SELECT * FROM candles WHERE asset = ? AND interval = ? ORDER BY timestamp DESC LIMIT ?",
+                (asset, interval, max_bars),
             ).fetchall()
             rows = list(reversed(rows))
             from src.core.types import PerpCandle
@@ -359,12 +361,12 @@ class Store:
                 volume=float(r["volume"]),
             ) for r in rows]
 
-    def candle_asset_count(self, stale_hours: float = 2.0) -> dict:
+    def candle_asset_count(self, stale_hours: float = 2.0, interval: str = "1h") -> dict:
         cutoff = datetime.now(timezone.utc).timestamp() - (stale_hours * 3600)
         with self._lock:
             rows = self._conn.execute(
-                "SELECT asset, COUNT(*) as cnt, MAX(timestamp) as latest FROM candles WHERE timestamp > ? GROUP BY asset",
-                (cutoff,),
+                "SELECT asset, COUNT(*) as cnt, MAX(timestamp) as latest FROM candles WHERE interval = ? AND timestamp > ? GROUP BY asset",
+                (interval, cutoff,),
             ).fetchall()
             return {r["asset"]: {"count": r["cnt"], "latest": r["latest"]} for r in rows}
 
