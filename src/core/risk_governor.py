@@ -240,7 +240,9 @@ class RiskGovernor:
     # ------------------------------------------------------------------
 
     def update_equity(self, equity: float):
-        """Update equity tracking. Called each cycle."""
+        """Update equity tracking. Called each cycle.
+        Sets baseline from first call (not initial_capital) to avoid
+        false drawdown triggers on startup with open positions."""
         now = datetime.now(timezone.utc)
         today = now.strftime("%Y-%m-%d")
 
@@ -249,6 +251,14 @@ class RiskGovernor:
             self._daily_date = today
             self._daily_start_equity = equity
             self._save_state()
+
+        # Baseline: first call sets peak to current equity
+        # (so open-position PnL from previous session doesn't trigger false drawdown)
+        if not hasattr(self, '_baseline_set'):
+            self._peak_equity = equity
+            self._baseline_set = True
+            self._save_state()
+            return
 
         # Update peak
         if equity > self._peak_equity:

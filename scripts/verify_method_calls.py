@@ -21,7 +21,8 @@ CLASS_MAP = {
     'telegram': ('TelegramBot',     f'{REPO}/src/core/telegram_bot.py'),
     'notifier': ('TelegramBot',     f'{REPO}/src/core/telegram_bot.py'),
     # Parameter-based objects (not self.*)
-    'exchange': ('PaperPerpExchange', f'{REPO}/src/adapters/paper_perp.py'),
+    'exchange': (('PaperPerpExchange', f'{REPO}/src/adapters/paper_perp.py'),
+                  ('ExecutionEngine', f'{REPO}/src/core/execution_engine.py')),
     'hl':       ('ExchangeAdapter',   f'{REPO}/src/adapters/base.py'),
 }
 
@@ -30,17 +31,20 @@ METHODS_CACHE: dict[str, set[str]] = {}
 
 def get_methods(name: str) -> set[str]:
     if name not in METHODS_CACHE:
-        cls_file = CLASS_MAP.get(name, (None, None))[1]
+        entry = CLASS_MAP.get(name, (None, None))
         methods: set[str] = set()
-        if cls_file and os.path.exists(cls_file):
-            with open(cls_file) as f:
-                try:
-                    tree = ast.parse(f.read())
-                    for node in ast.walk(tree):
-                        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                            methods.add(node.name)
-                except SyntaxError:
-                    pass
+        # Handle both single (tuple) and multi (list of tuples) entries
+        entries = [entry] if isinstance(entry[0], str) else entry
+        for cls_name, cls_file in entries:
+            if cls_file and os.path.exists(cls_file):
+                with open(cls_file) as f:
+                    try:
+                        tree = ast.parse(f.read())
+                        for node in ast.walk(tree):
+                            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                methods.add(node.name)
+                    except SyntaxError:
+                        pass
         METHODS_CACHE[name] = methods
     return METHODS_CACHE[name]
 

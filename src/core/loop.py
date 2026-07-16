@@ -181,6 +181,13 @@ class TradingLoop:
             tolerance_usd=1.0,
         )
 
+        # Reconciliation startup barrier (blocks entries until checks pass)
+        barrier = await self.reconciliation.startup_barrier()
+        if not barrier.passed and barrier.safe_halt_required:
+            logger.warning("RECONCILIATION: startup barrier FAILED -- %s", barrier.errors)
+            self.governor.trigger_kill(KillSwitchReason.RECONCILIATION_FAILURE)
+        asyncio.ensure_future(self.reconciliation.continuous_reconciliation())
+
         asyncio.ensure_future(self.notifier.bot_started(exchange.equity))
         asyncio.ensure_future(self.telegram.start_polling())
         saved_peak = self.store.get_state("paper_peak_equity")
@@ -688,6 +695,7 @@ class TradingLoop:
         # 8. Equity snapshot
         eq = exchange.equity
         ge = exchange.gross_exposure
+        self.governor.update_equity(eq)
         self.risk.update_equity(eq, ge)
         self.risk.set_gross_exposure(ge)
         self.store.save_equity_snapshot(eq, self.risk.peak_equity)
@@ -1087,6 +1095,20 @@ class TradingLoop:
             else:
                 _order_type = OrderType.MARKET
                 _price = None
+            # RiskGovernor: account-level entry check before committing
+            notional = qty * entry_price
+            current_positions = len(getattr(exchange, '_active_positions', {}))
+            gov_ok, gov_msg = self.governor.check_entry(
+                asset=asset,
+                notional=notional,
+                current_gross=exchange.gross_exposure,
+                current_equity=exchange.equity,
+                current_positions=current_positions,
+            )
+            if not gov_ok:
+                logger.info("ENTRY_DIAG %s: skip -- governor: %s", asset, gov_msg)
+                continue
+
             order = Order(
                 asset=asset,
                 side=side,
@@ -1407,8 +1429,8 @@ class TradingLoop:
             entry_confidence=pos.entry_confidence or 0.0,
             regime=getattr(pos, "regime", "") or "",
             entry_regime=getattr(pos, "entry_regime", "") or getattr(pos, "regime", "") or "",
-            mae_pct=getattr(pos, mae_pct, 0.0),
-            mfe_pct=getattr(pos, mfe_pct, 0.0),
+            mae_pct=getattr(pos, 'mae_pct', 0.0),
+            mfe_pct=getattr(pos, 'mfe_pct', 0.0),
         )
         if trade is None:
             logger.warning("_close %s: close_position returned None", asset)
