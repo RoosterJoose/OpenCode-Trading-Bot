@@ -22,6 +22,7 @@ import statistics
 import os
 import signal as sig
 from collections import defaultdict
+from dataclasses import asdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -30,7 +31,10 @@ from src.adapters.altfins import AltfinsAdapter
 from src.adapters.base import ExchangeAdapter
 from src.adapters.coinbase_advanced import CoinbaseAdvancedAdapter
 from src.adapters.kalshi import KalshiAdapter
-from src.adapters.paper_perp import PaperPerpExchange
+from src.core.execution_engine import ExecutionEngine
+from src.core.risk_governor import RiskGovernor
+from src.core.reconciliation import ReconciliationService
+from src.core.experiment_registry import ExperimentRegistry
 from src.core.event_kill import EventKillSwitch
 from src.core.telegram_bot import TelegramBot
 from src.core.intents import TradeIntent
@@ -99,6 +103,14 @@ class TradingLoop:
         self._stop_event = asyncio.Event()
         self._suggested_params: list[dict] = []
         self._daily_signals_log: list[dict] = []
+        self.governor = RiskGovernor(
+            self.store,
+            initial_capital=eq,
+            max_drawdown_pct=30.0,
+            max_daily_loss_pct=4.0,
+        )
+        self.experiments = ExperimentRegistry(data_dir / "experiments.db")
+        self.reconciliation: Optional[ReconciliationService] = None
         self._altfins_cycle = 0
         self._cusum: dict[str, dict] = {}  # per-asset CUSUM state: {"S_high": 0, "S_low": 0, "mean": 0, "std": 1, "n": 0}
         self._altfins = None
@@ -114,7 +126,7 @@ class TradingLoop:
         self.notifier = self.telegram
         self._sent_alerts: dict[str, float] = {}  # rate-limit alerts (key -> timestamp)
 
-    def _restore_paper_positions(self, exchange: PaperPerpExchange):
+    def _restore_paper_positions(self, exchange: ExecutionEngine):
         positions = self.store.get_state("positions") or []
         exchange.restore_positions(positions)
         for pos in exchange.positions.values():
@@ -128,9 +140,47 @@ class TradingLoop:
         self.running = True
         saved_eq = self.store.get_state("paper_equity")
         initial = float(saved_eq) if saved_eq else self.config.get("exchange", {}).get("initial_balance", 10_000.0)
-        exchange = PaperPerpExchange(initial_balance=initial)
+        exchange = ExecutionEngine(
+            initial_balance=initial,
+            spread_bps=3,
+            taker_fee=0.00025,
+            seed=42,
+        )
         self._restore_paper_positions(exchange)
         self._restore_risk_state()
+        # RiskGovernor: check latched kill state
+        if self.governor.is_killed():
+            kill_info = self.governor.get_kill_info()
+            logger.warning("RISK_GOVERNOR: latched kill -- reason=%s, ts=%s",
+                           kill_info.get("reason"), kill_info.get("timestamp"))
+
+        # Experiment registry: write run manifest
+        try:
+            import subprocess
+            commit = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=self.data_dir.parent,
+                text=True, stderr=subprocess.DEVNULL
+            ).strip() if (self.data_dir.parent / ".git").exists() else "unknown"
+        except Exception:
+            commit = "unknown"
+        self.experiments.create_run_manifest(
+            deployment_id=os.environ.get("HERMES_DEPLOYMENT", "DEP-CONS"),
+            config={
+                "initial_equity": initial,
+                "mode": "paper",
+                "strategies": [s.name() for s in self.strategies],
+                "assets": self.assets,
+            },
+        )
+
+        # Reconciliation service (no adapter = paper mode, skips exchange checks)
+        self.reconciliation = ReconciliationService(
+            local_store=self.store,
+            risk_governor=self.governor,
+            tolerance_usd=1.0,
+        )
+
         asyncio.ensure_future(self.notifier.bot_started(exchange.equity))
         asyncio.ensure_future(self.telegram.start_polling())
         saved_peak = self.store.get_state("paper_peak_equity")
@@ -330,7 +380,7 @@ class TradingLoop:
             self._sent_alerts[key] = now
             asyncio.ensure_future(self.notifier.send(message))
 
-    async def _cycle(self, hl: ExchangeAdapter, exchange: PaperPerpExchange):
+    async def _cycle(self, hl: ExchangeAdapter, exchange: ExecutionEngine):
         if self._cycle_count % 5 == 0:
             logger.info("heartbeat cycle=%d", self._cycle_count)
 
@@ -729,7 +779,7 @@ class TradingLoop:
         asset: str,
         candles: list[PerpCandle],
         hl: ExchangeAdapter,
-        exchange: PaperPerpExchange,
+        exchange: ExecutionEngine,
     ):
         self._last_entry_diag_cycle = self._cycle_count
         # Self-heal: candle freshness + quality check
@@ -1074,7 +1124,7 @@ class TradingLoop:
                 self.store.put_state("pending_param_changes", self._suggested_params)
                 logger.info("PENDING PARAM CHANGES: %d suggestions", len(self._suggested_params))
 
-    async def _process_external_intents(self, exchange: PaperPerpExchange, hl: ExchangeAdapter):
+    async def _process_external_intents(self, exchange: ExecutionEngine, hl: ExchangeAdapter):
         for row in self.store.pending_intents(limit=25):
             try:
                 intent = TradeIntent.from_row(row)
@@ -1085,7 +1135,7 @@ class TradingLoop:
             except Exception as e:
                 self.store.update_intent_status(int(row["id"]), "rejected", f"invalid_intent: {e}")
 
-    async def _execute_intent(self, intent: TradeIntent, exchange: PaperPerpExchange, hl: ExchangeAdapter) -> tuple[bool, str]:
+    async def _execute_intent(self, intent: TradeIntent, exchange: ExecutionEngine, hl: ExchangeAdapter) -> tuple[bool, str]:
         now = datetime.now(timezone.utc)
         if now >= intent.expires_at:
             return False, "expired"
@@ -1340,67 +1390,46 @@ class TradingLoop:
         pos: PerpPosition,
         price: float,
         reason: str,
-        exchange: PaperPerpExchange,
+        exchange: ExecutionEngine,
         close_pct: float = 1.0,
     ):
-        close_qty = pos.size * close_pct
-        await exchange.place_order(Order(
-            asset=asset,
-            side=pos.side.opposite,
-            order_type=OrderType.MARKET,
-            quantity=close_qty,
-            reduce_only=True,
-        ))
-
-        pnl_dollars = pos.unrealized_pnl * close_pct
-        r_mult = ((price - pos.entry_price) / pos.entry_price * pos.leverage) if pos.entry_price > 0 else 0.0
-        if pos.side == Side.SHORT:
-            r_mult = -r_mult
-
-        if close_pct < 1.0:
-            # Partial close (scale-out): close_pct of position, leave the rest
-            self.risk.record_trade(asset, pos.pnl_pct, pnl_dollars, reason)
-            trade = {
-                "asset": asset,
-                "side": pos.side.value,
-                "entry_price": pos.entry_price,
-                "exit_price": price,
-                "size": close_qty,
-                "leverage": pos.leverage,
-                "pnl_pct": round(pos.pnl_pct, 2),
-                "pnl_dollars": round(pnl_dollars, 2),
-                "fees": round(close_qty * price * 0.00025 * 2, 4),  # entry + exit taker fee
-                "funding_paid": round(getattr(pos, 'funding_accumulated', 0.0) * close_pct, 4),
-                "exit_reason": reason,
-                "strategy": pos.strategy or "",
-                "signal_source": pos.signal_source or "",
-                "entry_confidence": pos.entry_confidence or 0.0,
-                "entry_time": pos.entry_time.isoformat(),
-                "exit_time": datetime.now(timezone.utc).isoformat(),
-                "r_multiple": round(r_mult, 3),
-                "mae_pct": round(getattr(pos, 'mae_pct', 0.0), 2),
-        "mfe_pct": round(getattr(pos, 'mfe_pct', 0.0), 2),
-                "mfe_pct": round(getattr(pos, 'mfe_pct', 0.0), 2),
-                "regime": getattr(pos, "regime", "") or "",
-                "entry_regime": getattr(pos, "entry_regime", "") or getattr(pos, "regime", "") or "",
-            }
-            self.store.save_trade(trade)
-            # Reduce position size; move stop to breakeven
-            pos.size -= close_qty
-            pos.stop_loss = pos.entry_price
-            pos.tp1_scaled = True
+        if price <= 0:
+            logger.warning("_close %s: invalid price %.2f -- skipping", asset, price)
             return
 
-        # Full close (original logic)
-        pnl_pct = pos.pnl_pct
-        pnl_dollars = pos.unrealized_pnl
+        trade = exchange.close_position(
+            asset=asset,
+            price=price,
+            close_pct=close_pct,
+            exit_reason=reason,
+            strategy=pos.strategy or "",
+            signal_source=pos.signal_source or "",
+            entry_confidence=pos.entry_confidence or 0.0,
+            regime=getattr(pos, "regime", "") or "",
+            entry_regime=getattr(pos, "entry_regime", "") or getattr(pos, "regime", "") or "",
+            mae_pct=getattr(pos, mae_pct, 0.0),
+            mfe_pct=getattr(pos, mfe_pct, 0.0),
+        )
+        if trade is None:
+            logger.warning("_close %s: close_position returned None", asset)
+            return
+
+        # Record trade in risk manager
+        if close_pct < 1.0:
+            self.risk.record_trade(asset, trade.pnl_pct, trade.pnl_dollars, reason)
+            self.store.save_trade(asdict(trade))
+            return
+
+        # Full close
+        pnl_pct = trade.pnl_pct if abs(trade.pnl_pct) < 1e6 else 0.0
+        pnl_dollars = trade.pnl_dollars
 
         self.risk.record_trade(asset, pnl_pct, pnl_dollars, reason)
         self.risk.record_position_close(asset)
         self.risk.record_sleeve_outcome(pos.strategy or "", pnl_dollars)
-        self.signal_tracker.record(pos.signal_source, pnl_pct > 0)
-        for source in pos.component_sources:
-            self.signal_tracker.record(source, pnl_pct > 0)
+        self.signal_tracker.record(trade.signal_source, pnl_dollars > 0)
+        for source in getattr(pos, "component_sources", []):
+            self.signal_tracker.record(source, pnl_dollars > 0)
 
         if pos.strategy:
             for strat in self.strategies:
@@ -1408,33 +1437,10 @@ class TradingLoop:
                     strat.on_exit(asset)
                     break
 
-        trade = {
-            "asset": asset,
-            "side": pos.side.value,
-            "entry_price": pos.entry_price,
-            "exit_price": price,
-            "size": pos.size,
-            "leverage": pos.leverage,
-            "pnl_pct": round(pnl_pct, 2),
-            "pnl_dollars": round(pnl_dollars, 2),
-            "fees": round(close_qty * (pos.entry_price + price) * 0.00025, 4),
-            "funding_paid": round(getattr(pos, "funding_accumulated", 0.0) * close_pct, 4),
-            "exit_reason": reason,
-            "strategy": pos.strategy or "",
-            "signal_source": pos.signal_source or "",
-            "entry_confidence": pos.entry_confidence or 0.0,
-            "entry_time": pos.entry_time.isoformat(),
-            "exit_time": datetime.now(timezone.utc).isoformat(),
-            "r_multiple": round(r_mult, 3),
-            "mae_pct": round(getattr(pos, 'mae_pct', 0.0), 2),
-            "regime": getattr(pos, "regime", "") or "",
-            "entry_regime": getattr(pos, "entry_regime", "") or getattr(pos, "regime", "") or "",
-        }
-        self.store.save_trade(trade)
+        self.store.save_trade(asdict(trade))
 
 
-
-    async def _maybe_reflect(self, exchange: PaperPerpExchange):
+    async def _maybe_reflect(self, exchange: ExecutionEngine):
         now = datetime.now(timezone.utc)
         if self._last_reflection and (now - self._last_reflection).days < 7:
             return

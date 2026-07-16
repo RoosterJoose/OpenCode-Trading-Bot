@@ -226,11 +226,18 @@ class ExperimentRegistry:
         self.conn.executescript(SCHEMA)
         self.conn.commit()
 
-        # Counters for ID generation
-        self._hyp_counter = 0
-        self._trial_counter = 0
-        self._run_counter = 0
-        self._dec_counter = 0
+        # Counters for ID generation (restored from DB)
+        self._hyp_counter = self._restore_counter("experiments")
+        self._trial_counter = self._restore_counter("trials")
+        self._run_counter = self._restore_counter("runs")
+        self._dec_counter = self._restore_counter("decisions")
+
+    def _restore_counter(self, table: str) -> int:
+        try:
+            row = self.conn.execute("SELECT COUNT(*) as cnt FROM %s" % table).fetchone()
+            return row["cnt"] if row else 0
+        except Exception:
+            return 0
 
     def _next_hyp_id(self) -> str:
         year = datetime.now(timezone.utc).year
