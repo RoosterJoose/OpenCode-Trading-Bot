@@ -130,3 +130,4 @@ def compute_weights(db_path: str = DB_PATH) -> dict:
         elif v > MAX_WEIGHT:
             norm[s] = MAX_WEIGHT
 
+    return norm

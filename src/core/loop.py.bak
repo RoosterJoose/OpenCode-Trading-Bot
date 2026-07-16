@@ -831,8 +831,8 @@ class TradingLoop:
                         await self._close(asset, pos, price, "portfolio_max_age", exchange)
                         return
 
-                    # B. Peak decay: profitable position decayed >50% from peak (min \, else let ride)
-                    if peak > 3:
+                    # B. Peak decay: profitable position decayed >50% from peak
+                    if peak > 0:
                         decay_pct = (peak - upnl) / peak * 100
                         if upnl > 0 and decay_pct > 50:
                             logger.info("PORTFOLIO_SWEEP %s: upnl=$%.1f peak=$%.1f decay=%.0f%% -- closing", asset, upnl, peak, decay_pct)

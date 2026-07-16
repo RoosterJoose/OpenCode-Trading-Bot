@@ -47,6 +47,10 @@ echo "[5/6] Compile-checking both bots..."
 sudo -u hermes python3 -m py_compile $REPO_CONS/src/core/loop.py && echo "  CONS: loop.py OK"
 sudo -u hermes python3 -m py_compile $REPO_AGGR/src/core/loop.py && echo "  AGGR: loop.py OK"
 
+# Step 5b: deep audit (AST nesting + control-flow)
+echo "[5b/6] Running deep_audit.py..."
+python3 $REPO_CONS/scripts/deep_audit.py || { echo "FAILED: deep audit found issues"; exit 1; }
+echo "  PASS"
 # Step 6: restart both bots
 echo "[6/6] Restarting both bots..."
 sudo systemctl reset-failed hermes-bot hermes-bot-aggressive 2>/dev/null || true

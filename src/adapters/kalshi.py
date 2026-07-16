@@ -269,6 +269,8 @@ class KalshiAdapter(ExchangeAdapter):
 
     async def get_funding_rate(self, asset: str) -> float:
         return self._latest_funding.get(asset, 0.0)
+    async def get_spread(self, asset: str) -> float:
+        return 0.001
 
     async def fetch_price(self, asset: str) -> float:
         return self._latest_prices.get(asset, 0.0)

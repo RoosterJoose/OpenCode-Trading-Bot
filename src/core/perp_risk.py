@@ -54,11 +54,11 @@ class PerpRiskManager:
         self.stop_max_pct = stop_max_pct
         self.funding_entry_score = funding_entry_score
 
-        self.daily_start_equity = initial_equity
+        self.daily_start_equity = None
         self.last_reset_date = date.today()
         self.highest_dd: float = 0.0
         self.daily_pnl: float = 0.0
-        self.max_concurrent_positions: int = 5
+        self.max_concurrent_positions: int = 3
         self._consecutive_losses: dict[str, int] = defaultdict(int)
         self._oi_history: dict[str, list[tuple[int, float]]] = defaultdict(list)
         self._trade_pnls: list[float] = []
@@ -74,12 +74,15 @@ class PerpRiskManager:
         self.max_consecutive_losses: int = 5
         self.max_global_losses: int = 3
         self._global_loss_streak: int = 0
+        self._sleeve_pnls: dict[str, list[float]] = {}
 
     def update_equity(self, equity: float, gross_exposure: float):
         self.current_equity = equity
         if equity > self.peak_equity:
             self.peak_equity = equity
         today = date.today()
+        if self.daily_start_equity is None:
+            self.daily_start_equity = equity
         if today != self.last_reset_date:
             self.daily_start_equity = equity
             self.daily_pnl = 0.0
@@ -100,6 +103,9 @@ class PerpRiskManager:
         dd = self.current_drawdown()
         if dd >= self.max_drawdown_pct:
             return False, f"drawdown_halt: {dd:.1f}% >= {self.max_drawdown_pct}%"
+        if self.daily_start_equity is None:
+            return True, "warming_up: equity baseline not set"
+
         if len(self._active_positions) >= self.max_concurrent_positions:
             return False, f"max_positions: {len(self._active_positions)} >= {self.max_concurrent_positions}"
         daily_loss = (
@@ -288,6 +294,32 @@ class PerpRiskManager:
             self._total_wins += 1
         self.daily_pnl += pnl_dollars
         self.update_equity(self.current_equity + pnl_dollars, 0.0)
+
+    def record_sleeve_outcome(self, strategy: str, pnl_dollars: float):
+        """Track rolling PnL per strategy for dynamic confidence threshold."""
+        if strategy not in self._sleeve_pnls:
+            self._sleeve_pnls[strategy] = []
+        pnls = self._sleeve_pnls[strategy]
+        pnls.append(pnl_dollars)
+        if len(pnls) > 20:
+            pnls.pop(0)
+
+    def get_confidence_threshold(self, strategy: str) -> float:
+        """Return dynamic confidence threshold based on rolling Sharpe."""
+        pnls = self._sleeve_pnls.get(strategy, [])
+        if len(pnls) < 5:
+            return 0.70
+        mean_pnl = sum(pnls) / len(pnls)
+        std_pnl = (sum((p - mean_pnl) ** 2 for p in pnls) / len(pnls)) ** 0.5
+        if std_pnl == 0:
+            return 0.70
+        sharpe = mean_pnl / std_pnl
+        if sharpe >= 1.0:
+            return 0.55
+        elif sharpe <= -0.5:
+            return 0.80
+        fraction = (1.0 - sharpe) / 1.5
+        return min(0.80, max(0.55, 0.55 + fraction * 0.25))
 
     def record_signal_outcome(self, source: str, was_correct: bool):
         self._signal_outcomes[source].append(was_correct)

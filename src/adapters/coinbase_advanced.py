@@ -182,6 +182,9 @@ class CoinbaseAdvancedAdapter(ExchangeAdapter):
             params["start"] = start_time
             params["end"] = end_time
         data = await self._request("GET", path, params)
+        if not data.get("candles"):
+            logger.warning("candles empty for %s (pid=%s) — API returned no data", asset, pid)
+            return []
         candles = data.get("candles", [])
         result: list[PerpCandle] = []
         for c in candles:

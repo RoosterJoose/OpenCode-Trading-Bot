@@ -57,10 +57,6 @@ HTML = """<!DOCTYPE html>
   table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;padding:9px 8px;border-bottom:1px solid rgba(38,64,96,.55)}th{color:#8fa2bc;font-size:11px;font-weight:700}.badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 10px;font-size:11px;font-weight:800}.positive{color:var(--green)}.negative{color:var(--red)}.neutral{color:#a7b6ca}.badge.positive{background:rgba(57,240,122,.12)}.badge.negative{background:rgba(255,93,99,.12)}.badge.neutral{background:rgba(122,150,185,.12)}.confidence{height:6px;width:55px;background:#172842;border-radius:999px;overflow:hidden}.confidence span{display:block;height:100%;background:linear-gradient(90deg,#36e776,#7dff9f)}
   .bottom{display:grid;grid-template-columns:1.45fr .62fr .75fr 1fr;gap:14px;margin-top:14px}.riskline{margin:15px 0}.ring{width:86px;height:86px;border-radius:50%;background:conic-gradient(var(--amber) 0 226deg,#172842 226deg);display:grid;place-items:center;color:var(--amber);font-weight:900}.ai{background:linear-gradient(135deg,rgba(19,38,92,.9),rgba(46,21,99,.88))}.ask{margin-top:12px;border:0;border-radius:10px;padding:13px 15px;width:100%;color:#fff;background:linear-gradient(90deg,#2559ff,#7d3cff);text-align:left}.timeline{display:grid;gap:12px}.event{display:grid;grid-template-columns:56px 14px 1fr;gap:10px;align-items:start}.event .pin{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 15px var(--green);margin-top:6px}.event small{color:#7f91aa}.event b{display:block;font-size:13px}.empty{color:#8192a9;padding:24px;text-align:center}.mobile-only{display:none}
   @media(max-width:1300px){.kpis{grid-template-columns:repeat(3,1fr)}.grid,.bottom{grid-template-columns:1fr}.strategies{grid-template-columns:repeat(2,1fr)}}@media(max-width:860px){.app{grid-template-columns:1fr}.side{display:none}.main{padding:16px}.top{grid-template-columns:1fr}.kpis{grid-template-columns:1fr 1fr}.mini-grid,.heat,.strategies{grid-template-columns:1fr 1fr}.mobile-only{display:block}}@media(max-width:560px){.kpis,.mini-grid,.heat,.strategies{grid-template-columns:1fr}.value{font-size:21px}}
-  .tab-bar{display:flex;gap:0;margin:0 0 6px;background:var(--card);border-radius:8px;overflow:hidden;border:1px solid var(--border)}
-  .tab-bar .tab{padding:10px 20px;cursor:pointer;border:none;background:transparent;color:var(--dim);font-weight:600;font-size:12px;transition:.2s;flex:1;text-align:center;border-radius:0}
-  .tab-bar .tab.active{background:var(--accent);color:var(--bg)}
-  .tab-bar .tab:hover:not(.active){color:var(--text);background:var(--hover)}
 </style>
 </head>
 <body>
@@ -73,13 +69,12 @@ HTML = """<!DOCTYPE html>
     <div class="botbox"><div class="row"><span>Bot Status</span><b><i class="dot"></i> Running</b></div><div class="row"><span>Mode</span><b id="side-mode">Paper</b></div><div class="row"><span>Altfins Permits</span><b id="altfins-permits">—</b></div><div class="row"><span>Server</span><b>Oracle US-East</b></div><div class="row"><span>Refresh</span><b>15 sec</b></div></div>
   </aside>
   <main class="main" id="overview">
-<div class="tab-bar"><a href="/" class="tab">CONSERVATIVE</a><a href="/aggressive" class="tab">AGGRESSIVE</a><a href="/spot" class="tab">SPOT (SMA200)</a></div>
     <div class="top">
       <div class="title"><h2>Dashboard</h2><p><span id="today"></span> · <span id="clock"></span> UTC</p></div>
       <label class="search">⌕ <input id="search" placeholder="Search markets, pairs, strategies..." autocomplete="off"><kbd>⌘ K</kbd></label>
       <div style="display:flex;gap:14px;align-items:center"><div class="pill"><i class="dot"></i> Bot Active</div><div class="profile"><div class="avatar">H</div><div><b>Hermes</b><br><span class="pro">Paper</span></div></div></div>
     </div>
-    <section id="ab-banner" style="background:linear-gradient(135deg,#1a0f2e,#0d1f3a,#1a0f2e);border:2px solid #ffb11a;border-radius:12px;padding:18px 24px;margin:4px 0 18px;display:flex;align-items:center;gap:18px;box-shadow:0 0 32px rgba(255,177,26,.25)">
+    <section id="ab-banner" style="background:linear-gradient(135deg,#1a0f2e,#0d1f3a,#1a0f2e);border:2px solid #ffb11a;border-radius:12px;padding:18px 24px;margin:18px 0;display:flex;align-items:center;gap:18px;box-shadow:0 0 32px rgba(255,177,26,.25)">
       <div style="flex-shrink:0;font-size:36px">&#9876;</div>
       <div style="flex:1">
         <div style="font-size:11px;letter-spacing:2px;color:#ffb11a;font-weight:700;margin-bottom:4px">A/B TEST LIVE</div>
@@ -87,21 +82,20 @@ HTML = """<!DOCTYPE html>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
           <div id="ab-conservative" style="background:rgba(16,230,255,.08);border:1px solid rgba(16,230,255,.3);border-radius:8px;padding:12px">
             <div style="font-size:10px;letter-spacing:1.5px;color:#10e6ff;font-weight:700;margin-bottom:6px">CONSERVATIVE</div>
-            <div style="font-size:22px;font-weight:700;color:#fff" id="ab-conservative-equity">—</div>
-            <div style="font-size:11px;color:#aebbd0;margin-top:4px" id="ab-conservative-meta">—</div>
+            <div style="font-size:22px;font-weight:700;color:#fff" id="ab-conservative-equity">$11,273</div>
+            <div style="font-size:11px;color:#aebbd0;margin-top:4px" id="ab-conservative-meta">201 trades &middot; 49% WR &middot; 0.70 conf</div>
           </div>
           <div id="ab-aggressive" style="background:rgba(255,177,26,.08);border:1px solid rgba(255,177,26,.4);border-radius:8px;padding:12px">
             <div style="font-size:10px;letter-spacing:1.5px;color:#ffb11a;font-weight:700;margin-bottom:6px">AGGRESSIVE</div>
-            <div style="font-size:22px;font-weight:700;color:#fff" id="ab-aggressive-equity">—</div>
-            <div style="font-size:11px;color:#aebbd0;margin-top:4px" id="ab-aggressive-meta">—</div>
+            <div style="font-size:22px;font-weight:700;color:#fff" id="ab-aggressive-equity">$11,277</div>
+            <div style="font-size:11px;color:#aebbd0;margin-top:4px" id="ab-aggressive-meta">0 trades &middot; 0% WR &middot; 0.55 conf</div>
           </div>
         </div>
       </div>
-      <div style="flex-shrink:0;text-align:right;font-size:10px;color:#aebbd0;max-width:120px" id="ab-starting-label">
+      <div style="flex-shrink:0;text-align:right;font-size:10px;color:#aebbd0;max-width:120px">
         <div>Both starting at</div>
-        <div style="font-size:18px;color:#fff;font-weight:700"><span id="ab-starting-value">—</span></div>
+        <div style="font-size:18px;color:#fff;font-weight:700">$11,273</div>
         <div style="margin-top:6px">Winner at 30 trades</div>
-      </div>
       </div>
     </section>
     <section id="ab-detail" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
@@ -154,10 +148,10 @@ const fmtUSD=n=>'$'+Number(n||0).toLocaleString(undefined,{maximumFractionDigits
 function now(){const d=new Date();document.getElementById('today').textContent=d.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric'});document.getElementById('clock').textContent=d.toISOString().slice(11,19)}setInterval(now,1000);now();
 function drawLine(id, pts, color='#1d9bff', fill=true){const c=document.getElementById(id);if(!c)return;const r=c.getBoundingClientRect();c.width=Math.max(40,r.width*devicePixelRatio);c.height=Math.max(28,r.height*devicePixelRatio);const x=c.getContext('2d');x.scale(devicePixelRatio,devicePixelRatio);const w=r.width,h=r.height;x.clearRect(0,0,w,h);if(!pts||pts.length<2){pts=[0,1,0.6,1.4,1.2,1.8]}const min=Math.min(...pts),max=Math.max(...pts),rng=max-min||1;x.beginPath();pts.forEach((p,i)=>{const xx=i/(pts.length-1)*w;const yy=h-8-((p-min)/rng)*(h-16);i?x.lineTo(xx,yy):x.moveTo(xx,yy)});x.strokeStyle=color;x.lineWidth=2;x.stroke();if(fill){x.lineTo(w,h);x.lineTo(0,h);x.closePath();const g=x.createLinearGradient(0,0,0,h);g.addColorStop(0,color+'55');g.addColorStop(1,color+'00');x.fillStyle=g;x.fill()}}
 function equitySlice(){const map={ '1D':24,'1W':7*24,'1M':31*24,'3M':93*24};return state.equity.slice(-Math.min(state.equity.length,map[state.range]||state.equity.length)).map(p=>Number(p.equity||0))}
-function renderKpis(){const s=state.status,p=state.positions,eq=Number(s.equity||10000),peak=Number(s.peak_equity||eq),dd=peak?((peak-eq)/peak*100):0,exp=Number(s.gross_exposure||0),lev=Number(s.effective_leverage||0),expPct=Math.min(100,exp/(eq*3||1)*100);document.getElementById('equity').textContent=fmtUSD(eq);document.getElementById('curve-equity').textContent=fmtUSD(eq);document.getElementById('equity-sub').textContent=pct(s.daily_pnl_pct||0)+' today';document.getElementById('curve-change').textContent=pct(((eq-10000)/10000)*100)+' all time';document.getElementById('daily-pnl').textContent=fmtUSD((eq-10000));document.getElementById('daily-pnl-sub').textContent=pct(s.daily_pnl_pct||0);document.getElementById('weekly-pnl').textContent=fmtUSD((eq-10000));document.getElementById('weekly-pnl-sub').textContent=pct(((eq-10000)/10000)*100);document.getElementById('win-rate').textContent=s.win_rate?(s.win_rate*100).toFixed(1)+'%':'0.0%';document.getElementById('profit-factor').textContent=s.profit_factor?Number(s.profit_factor).toFixed(2):'—';document.getElementById('profit-sub').textContent=s.profit_factor?'+ live':'waiting for trades';document.getElementById('exposure-pct').textContent=expPct.toFixed(1)+'%';document.getElementById('exposure-bar').style.width=expPct+'%';document.getElementById('active-positions').textContent=p.length;document.getElementById('positions-sub').textContent='Across '+ASSETS.length+' pairs';document.getElementById('drawdown').textContent=dd.toFixed(2)+'% / 5.00%';document.getElementById('dd-bar').style.width=Math.min(100,dd/5*100)+'%';document.getElementById('leverage').textContent=lev.toFixed(2)+'x / 3.0x';document.getElementById('lev-bar').style.width=Math.min(100,lev/3*100)+'%';document.getElementById('limit-text').textContent=expPct.toFixed(1)+'% / 100%';document.getElementById('limit-bar').style.width=expPct+'%';document.getElementById('risk-ring').textContent=Math.round(Math.max(dd/5*100,expPct))+'%';document.getElementById('side-mode').textContent=BOT==='aggr'?'AGGRESSIVE':BOT==='spot'?'SPOT':'CONS';const ap=s.altfins_permits||{};const avail=ap.available;document.getElementById('altfins-permits').textContent=avail!==undefined?avail+'/1000':'—';const sc=s.altfins_signal_count||0;document.getElementById('altfins-count').textContent=sc;document.getElementById('altfins-sub').textContent=sc?'signals active':'no signals';document.getElementById('sortino').textContent=s.sortino?Number(s.sortino).toFixed(2):'—';document.getElementById('sortino-sub').textContent=s.sortino?'downside-adjusted':'< 30 trades';document.getElementById('rolling-wr').textContent=s.rolling_wr?(s.rolling_wr*100).toFixed(1)+'% ('+s.rolling_trades+'tr)':'—';document.getElementById('rolling-sub').textContent=s.rolling_trades?s.rolling_trades+' trades':'insufficient data';document.getElementById('expectancy').textContent=s.expectancy?Number(s.expectancy).toFixed(3)+'R':'—';document.getElementById('expectancy-sub').textContent=s.expectancy?'avg R per trade':'< 30 trades';document.getElementById('dd-duration').textContent=s.drawdown_duration_hours?s.drawdown_duration_hours.toFixed(1)+'h':'—';document.getElementById('dd-duration-sub').textContent=s.drawdown_duration_hours?'since peak':'no drawdown';['spark-equity','spark-daily','spark-weekly','spark-profit','spark-pos'].forEach((id,i)=>drawLine(id,equitySlice().slice(-40),i===3?'#7d3cff':'#1d9bff',false));drawLine('equity-chart',equitySlice(),'#1d9bff',true)}
+function renderKpis(){const s=state.status,p=state.positions,eq=Number(s.equity||10000),peak=Number(s.peak_equity||eq),dd=peak?((peak-eq)/peak*100):0,exp=Number(s.gross_exposure||0),lev=Number(s.effective_leverage||0),expPct=Math.min(100,exp/(eq*3||1)*100);document.getElementById('equity').textContent=fmtUSD(eq);document.getElementById('curve-equity').textContent=fmtUSD(eq);document.getElementById('equity-sub').textContent=pct(s.daily_pnl_pct||0)+' today';document.getElementById('curve-change').textContent=pct(((eq-10000)/10000)*100)+' all time';document.getElementById('daily-pnl').textContent=fmtUSD((eq-10000));document.getElementById('daily-pnl-sub').textContent=pct(s.daily_pnl_pct||0);document.getElementById('weekly-pnl').textContent=fmtUSD((eq-10000));document.getElementById('weekly-pnl-sub').textContent=pct(((eq-10000)/10000)*100);document.getElementById('win-rate').textContent=s.win_rate?(s.win_rate*100).toFixed(1)+'%':'0.0%';document.getElementById('profit-factor').textContent=s.profit_factor?Number(s.profit_factor).toFixed(2):'—';document.getElementById('profit-sub').textContent=s.profit_factor?'+ live':'waiting for trades';document.getElementById('exposure-pct').textContent=expPct.toFixed(1)+'%';document.getElementById('exposure-bar').style.width=expPct+'%';document.getElementById('active-positions').textContent=p.length;document.getElementById('positions-sub').textContent='Across '+ASSETS.length+' pairs';document.getElementById('drawdown').textContent=dd.toFixed(2)+'% / 5.00%';document.getElementById('dd-bar').style.width=Math.min(100,dd/5*100)+'%';document.getElementById('leverage').textContent=lev.toFixed(2)+'x / 3.0x';document.getElementById('lev-bar').style.width=Math.min(100,lev/3*100)+'%';document.getElementById('limit-text').textContent=expPct.toFixed(1)+'% / 100%';document.getElementById('limit-bar').style.width=expPct+'%';document.getElementById('risk-ring').textContent=Math.round(Math.max(dd/5*100,expPct))+'%';document.getElementById('side-mode').textContent=(s.mode||'paper').toUpperCase();const ap=s.altfins_permits||{};const avail=ap.available;document.getElementById('altfins-permits').textContent=avail!==undefined?avail+'/1000':'—';const sc=s.altfins_signal_count||0;document.getElementById('altfins-count').textContent=sc;document.getElementById('altfins-sub').textContent=sc?'signals active':'no signals';document.getElementById('sortino').textContent=s.sortino?Number(s.sortino).toFixed(2):'—';document.getElementById('sortino-sub').textContent=s.sortino?'downside-adjusted':'< 30 trades';document.getElementById('rolling-wr').textContent=s.rolling_wr?(s.rolling_wr*100).toFixed(1)+'% ('+s.rolling_trades+'tr)':'—';document.getElementById('rolling-sub').textContent=s.rolling_trades?s.rolling_trades+' trades':'insufficient data';document.getElementById('expectancy').textContent=s.expectancy?Number(s.expectancy).toFixed(3)+'R':'—';document.getElementById('expectancy-sub').textContent=s.expectancy?'avg R per trade':'< 30 trades';document.getElementById('dd-duration').textContent=s.drawdown_duration_hours?s.drawdown_duration_hours.toFixed(1)+'h':'—';document.getElementById('dd-duration-sub').textContent=s.drawdown_duration_hours?'since peak':'no drawdown';['spark-equity','spark-daily','spark-weekly','spark-profit','spark-pos'].forEach((id,i)=>drawLine(id,equitySlice().slice(-40),i===3?'#7d3cff':'#1d9bff',false));drawLine('equity-chart',equitySlice(),'#1d9bff',true)}
 function renderMarkets(){const heat=document.getElementById('heatmap');const markets=state.markets.length?state.markets:ASSETS.map(a=>({asset:a,change_24h:0,price:0,funding:0,volume_24h:0}));heat.innerHTML=markets.map(m=>{const n=Number(m.change_24h||0);return '<div class="'+(n<0?'red':'')+'">'+m.asset+'<br><span class="'+(n<0?'loss':'gain')+'">'+pct(n)+'</span></div>'}).join('');const btc=markets.find(m=>m.asset==='BTC')||{};document.getElementById('market-regime').textContent=state.positions.length?'Active Risk':(Number(btc.change_24h||0)>1?'Bullish Trend':'Watching');document.getElementById('volatility').textContent=(state.status.effective_leverage||0)>2?'Elevated':'Normal';document.getElementById('funding').textContent=btc.funding!==undefined?(Number(btc.funding)*100).toFixed(4)+'%':'Enabled'}
 function renderStrategies(){const trades=state.trades;const by=n=>trades.filter(t=>(t.strategy||'').toLowerCase().includes(n));const cards=[['Mean Reversion','mr','Active','#10e6ff'],['Trend Following','trend','Active','#7d3cff'],['Breakout','breakout','Paused','#ffb11a'],['Scanner Health','scanner','Active','#ff8a00']];document.getElementById('strategy-cards').innerHTML=cards.map(([name,key,tag,color])=>{const ts=by(key),wins=ts.filter(t=>Number(t.pnl_pct)>0).length,wr=ts.length?wins/ts.length*100:0;return '<div class="strategy"><span class="tag">'+tag+'</span><h4 style="margin:0 0 18px;color:'+color+'">'+name+'</h4><table><tr><th>Trades</th><th>Win Rate</th><th>Avg R</th></tr><tr><td>'+ts.length+'</td><td>'+(wr?wr.toFixed(0):'—')+'%</td><td>'+((ts.reduce((a,t)=>a+Number(t.r_multiple||0),0)/(ts.length||1)).toFixed(2))+'R</td></tr></table><canvas class="spark" id="spark-'+key+'"></canvas></div>'}).join('');cards.forEach(([_,key,,color])=>drawLine('spark-'+key,equitySlice().slice(-24),color,false))}
-function renderPositions(){const tbody=document.getElementById('positions-body');document.getElementById('position-count').textContent=state.positions.length;if(!state.positions.length){tbody.innerHTML='<tr><td colspan="8" class="empty">'+(BOT==='spot'?'No open SMA200 spot positions. Waiting for prices above 200-day SMA.':'No open positions. Waiting for valid setups.')+'</td></tr>';return}tbody.innerHTML=state.positions.map(p=>{const price=Number(p.entry_price||0)+Number(p.unrealized_pnl||0)/(Number(p.size||1));return '<tr><td>'+p.asset+'/USDT</td><td><span class="badge '+(p.side==='long'?'positive':'negative')+'">'+p.side+'</span></td><td>'+fmtUSD(p.entry_price)+'</td><td>'+fmtUSD(price)+'</td><td class="'+cls(p.unrealized_pnl)+'">'+fmtUSD(p.unrealized_pnl)+'</td><td>'+fmtUSD(p.stop_loss||0)+'</td><td>'+Number(p.leverage||0).toFixed(1)+'x</td><td>'+Number(p.size||0).toFixed(4)+'</td></tr>'}).join('')}
+function renderPositions(){const tbody=document.getElementById('positions-body');document.getElementById('position-count').textContent=state.positions.length;if(!state.positions.length){tbody.innerHTML='<tr><td colspan="8" class="empty">No open paper positions yet. The bot is waiting for valid setups.</td></tr>';return}tbody.innerHTML=state.positions.map(p=>{const price=Number(p.entry_price||0)+Number(p.unrealized_pnl||0)/(Number(p.size||1));return '<tr><td>'+p.asset+'/USDT</td><td><span class="badge '+(p.side==='long'?'positive':'negative')+'">'+p.side+'</span></td><td>'+fmtUSD(p.entry_price)+'</td><td>'+fmtUSD(price)+'</td><td class="'+cls(p.unrealized_pnl)+'">'+fmtUSD(p.unrealized_pnl)+'</td><td>'+fmtUSD(p.stop_loss||0)+'</td><td>'+Number(p.leverage||0).toFixed(1)+'x</td><td>'+Number(p.size||0).toFixed(4)+'</td></tr>'}).join('')}
 function renderWatchlist(){const q=state.query.toUpperCase();const markets=(state.markets.length?state.markets:ASSETS.map(a=>({asset:a,price:0,change_24h:0,volume_24h:0}))).filter(m=>!q||m.asset.includes(q));document.getElementById('watchlist').innerHTML=markets.map((m,i)=>{const n=Number(m.change_24h||0),conf=Math.max(35,Math.min(92,55+n*8)),rsi=Math.max(25,Math.min(78,50+n*4)).toFixed(1),sig=conf>78?'Strong Buy':conf>58?'+ Buy':n<0?'Caution':'Neutral';return '<tr><td>'+(i+1)+'</td><td>'+m.asset+'/USDT</td><td>'+fmtUSD(m.price)+'</td><td>'+rsi+'</td><td class="'+(n>=0?'gain':'loss')+'">'+(n>=0?'↑':'↓')+'</td><td>'+(Number(m.volume_24h||0)>0?'live':'—')+'</td><td><div style="display:flex;gap:8px;align-items:center"><div class="confidence"><span style="width:'+conf+'%"></span></div>'+Math.round(conf)+'</div></td><td><span class="badge '+(sig==='Caution'?'negative':sig==='Neutral'?'neutral':'positive')+'">'+sig+'</span></td></tr>'}).join('')}
 function renderActivity(){const sigs=state.signals.slice(-8).reverse();const acts=[...sigs.map(s=>({t:(s.time||'').slice(11,16),b:'Signal Detected',d:(s.side||'').toUpperCase()+' '+s.asset+' '+(s.strategy||'')+' conf '+Math.round((s.confidence||0)*100)+'%'})),...state.trades.slice(0,4).map(t=>({t:(t.exit_time||'').slice(11,16),b:'Trade Closed',d:t.asset+' '+(Number(t.pnl_pct||0)>=0?'+':'')+Number(t.pnl_pct||0).toFixed(2)+'%'}))];document.getElementById('activity').innerHTML=(acts.length?acts:[{t:'now',b:'System Nominal',d:'Heartbeat, dashboard, and health timer active.'}]).slice(0,6).map(a=>'<div class="event"><small>'+a.t+'</small><div class="pin"></div><div><b>'+a.b+'</b><span class="sub">'+a.d+'</span></div></div>').join('')}
 function renderReflection(){const r=state.reflection;let html='<p><b>Today&#39;s Summary</b></p><p class="sub">Paper mode active. Local TA and Altfins metrics are both feeding entry confidence. Health checks restart the bot if snapshots go stale.</p>';if(r&&r.suggestions&&r.suggestions.length){html+='<p><b>Pending Suggestions</b></p>'+r.suggestions.map(s=>'<p class="sub">'+s.parameter+': '+s.current_value+' → '+s.suggested_value+'</p>').join('')}else html+='<p><b>Key Lesson</b></p><p class="sub">Reflection runs after enough closed paper trades.</p>';document.getElementById('reflection').innerHTML=html}
@@ -225,76 +219,13 @@ function renderCompare(){
   var metaEl=document.getElementById('ab-aggressive-meta');
   var cEqEl=document.getElementById('ab-conservative-equity');
   var cMetaEl=document.getElementById('ab-conservative-meta');
-  // Defensive: cap equity to $200k max — prevents stale pre-reset values (> $20k) leaking
-  var aggrEquity=Math.min(a.equity||0,200000);
-  var consEquity=Math.min(con.equity||0,200000);
-  if(eqEl)eqEl.textContent=fmtUSD(aggrEquity);
+  if(eqEl)eqEl.textContent=fmtUSD(a.equity||0);
   if(metaEl)metaEl.textContent=Number(a.total_trades||0)+' trades '+(a.win_rate?(a.win_rate*100).toFixed(0)+'% WR':'0% WR')+' '+(a.profit_factor?Number(a.profit_factor).toFixed(2):'0.00')+' PF';
-  if(cEqEl)cEqEl.textContent=fmtUSD(consEquity);
-  if(cMetaEl)cMetaEl.textContent=Number(con.total_trades||0)+' trades '+(con.win_rate?(con.win_rate*100).toFixed(0)+'% WR':'0% WR')+' '+(con.profit_factor?Number(con.profit_factor).toFixed(2):'0.00')+' PF';
-  var startEl=document.getElementById('ab-starting-value');
-  if(startEl)startEl.textContent=fmtUSD(BOT==='spot'?5000:Math.min(con.equity||5000,200000))
+  if(cEqEl)cEqEl.textContent=fmtUSD(con.equity||0);
+  if(cMetaEl)cMetaEl.textContent=Number(con.total_trades||0)+' trades '+(con.win_rate?(con.win_rate*100).toFixed(0)+'% WR':'0% WR')+' '+(con.profit_factor?Number(con.profit_factor).toFixed(2):'0.00')+' PF'
 }
 function renderLearnings(){const c=state.learnings&&state.learnings.cumulative;if(!c||!c.total_days){document.getElementById('learnings').innerHTML='<p class="sub">Learning accumulation starts after multiple days of data.</p>';return}let html='<p><b>'+c.total_days+' days tracked</b><span class="sub"> · last update '+c.last_updated.slice(0,10)+'</span></p>';if(c.lessons&&c.lessons.length){html+=c.lessons.map(l=>'<div class="badge neutral">Lesson</div><p class="sub">'+l+'</p>').join('')}if(c.persistent_missed_reasons&&c.persistent_missed_reasons.length){html+='<p><b>Persistent Patterns</b></p>'+c.persistent_missed_reasons.slice(0,5).map(r=>'<p class="sub">'+r.reason+': '+r.count+'x</p>').join('')}if(c.most_frequently_bearish&&c.most_frequently_bearish.length){html+='<p><b>Most Bearish Assets</b> <span class="sub">('+c.most_frequently_bearish[0].days+' days)</span></p><div style="display:flex;flex-wrap:wrap;gap:8px">'+c.most_frequently_bearish.slice(0,6).map(a=>'<span class="badge negative">'+a.asset+'</span>').join('')+'</div>'}document.getElementById('learnings').innerHTML=html}
-var BOT="__BOT__";
-function api(e){
-  if(BOT==='aggr'&&/^(status|trades|positions|equity)$/.test(e))return'/api/aggressive/'+e;
-  if(BOT==='spot'&&/^(status|trades|positions)$/.test(e))return'/api/sma200/'+e;
-  return'/api/'+e
-}
-// Highlight active tab
-document.querySelectorAll('.tab-bar a').forEach(function(a){
-  var p=a.getAttribute('href');
-  if(BOT==='cons'&&(p==='/'||p==='/cons'))a.classList.add('active');
-  if(BOT==='aggr'&&p==='/aggressive')a.classList.add('active');
-  if(BOT==='spot'&&p==='/spot')a.classList.add('active')
-});
-async function load(){
-  try{
-    if(BOT==='aggr'){
-      var eps=['status','trades','positions','equity'];
-      var [st,tr,po,eq]=await Promise.all(eps.map(function(p){return fetch(api(p)).then(function(r){return r.json()})}));
-      state.status=st||{equity:5000,total_trades:0};
-      state.trades=tr||[];state.positions=po||[];state.equity=eq||[];
-    }else if(BOT==='spot'){
-      var eps=['status','trades','positions'];
-      var [st,tr,po]=await Promise.all(eps.map(function(p){return fetch(api(p)).then(function(r){return r.json()})}));
-      state.status=st||{equity:5000,total_trades:0};
-      state.trades=tr||[];
-      state.positions=(po||[]).map(function(p){return{asset:p.asset,side:'long',entry_price:p.entry_price,unrealized_pnl:0,stop_loss:0,leverage:1.0,size:p.size}});
-      state.equity=[];
-    }else{
-      var eps=['status','trades','positions','equity','signals','reflection','markets','daily-reflection','learnings','health','compare','per-asset','per-regime','ab-reflection'];
-      var [st,tr,po,eq,si,re,ma,dr,le,he,co,pa,pr,ab]=await Promise.all(eps.map(function(p){return fetch(api(p)).then(function(r){return r.json()})}));
-      state.status=st||{};state.trades=tr||[];state.positions=po||[];state.equity=eq||[];
-      state.signals=si||[];state.reflection=re||{};state.markets=ma||[];
-      state.dailyReflection=dr||{};state.learnings=le||{};state.health=he||{};
-      state.compare=co||{};state.perAsset=pa||[];state.perRegime=pr||[];
-      state.abReflection=ab||{};
-    }
-    // Title
-    var h2=document.querySelector('.title h2');
-    if(h2)h2.textContent=BOT==='aggr'?'Aggressive Bot':BOT==='spot'?'SMA200 Spot Bot':'Conservative Bot';
-    var sm=document.getElementById('side-mode');
-    if(sm)sm.textContent=BOT==='aggr'?'AGGR':BOT==='spot'?'SPOT':'CONS';
-    showHideSections();
-    renderKpis();renderPositions();renderStrategies();renderWatchlist();renderActivity();
-    renderReflection();renderDailyReflection();renderHealth();renderLearnings();
-    renderPerAsset();renderPerRegime();renderCompare();renderABReflection();
-    if(BOT==='cons')renderMarkets()
-  }catch(e){console.error(e)}
-}
-function showHideSections(){
-  var isSpot=BOT==='spot',isAggr=BOT==='aggr';
-  var risk=document.getElementById('risk');if(risk)risk.style.display=isSpot?'none':'block';
-  var mkts=document.getElementById('markets');if(mkts)mkts.style.display=isSpot?'none':'grid';
-  var strs=document.getElementById('strategies');if(strs)strs.style.display=isSpot?'none':'block';
-  var abn=document.getElementById('ab-banner');if(abn)abn.style.display=(isSpot||isAggr)?'none':'flex';
-  var wl=document.getElementById('analytics');if(wl)wl.style.display=isSpot?'none':'block';
-  var abc=document.getElementById('ab-comparison');if(abc)abc.style.display=isSpot?'none':'block';
-  document.querySelectorAll('#ab-per-asset,#ab-per-regime').forEach(function(e){e.style.display=isSpot?'none':'block'});
-}
-
+async function load(){try{const [status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health,compare,perAsset,perRegime,abReflection]=await Promise.all(['/api/status','/api/trades','/api/positions','/api/equity','/api/signals','/api/reflection','/api/markets','/api/daily-reflection','/api/learnings','/api/health','/api/compare','/api/per-asset','/api/per-regime','/api/ab-reflection'].map(u=>fetch(u).then(r=>r.json())));state={...state,status,trades,positions,equity,signals,reflection,markets,dailyReflection,learnings,health,compare:compare||{},perAsset:perAsset||[],perRegime:perRegime||[],abReflection:abReflection||{}};renderABReflection();renderKpis();renderMarkets();renderStrategies();renderPositions();renderWatchlist();renderActivity();renderReflection();renderDailyReflection();renderLearnings();renderHealth();renderCompare();renderABReflection();renderPerAsset();renderPerRegime()}catch(e){console.error(e)}}
 document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-range]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.range=b.dataset.range;renderKpis()});document.getElementById('search').addEventListener('input',e=>{state.query=e.target.value;renderWatchlist()});window.addEventListener('resize',()=>renderKpis());load();setInterval(load,60000);
 </script>
 </body>
@@ -341,12 +272,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, **kwargs)
 
     def do_GET(self):
-        if self.path == "/" or self.path == "/cons":
-            self._send_html(HTML.replace("__BOT__", "cons"))
-        elif self.path == "/aggressive":
-            self._send_html(HTML.replace("__BOT__", "aggr"))
-        elif self.path == "/spot":
-            self._send_html(HTML.replace("__BOT__", "spot"))
+        if self.path == "/":
+            self._send_html(HTML)
         elif self.path.startswith("/api/"):
             self._handle_api()
         else:
@@ -388,14 +315,6 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             "/api/compare": self._api_compare,
             "/api/readiness": self._api_readiness,
             "/api/intents": self._api_intents,
-            "/api/sma200/status": self._api_sma200_status,
-            "/api/sma200/trades": self._api_sma200_trades,
-            "/api/sma200/positions": self._api_sma200_positions,
-            "/api/sma200/equity": self._api_sma200_equity,
-            "/api/aggressive/status": self._api_aggressive_status,
-            "/api/aggressive/positions": self._api_aggressive_positions,
-            "/api/aggressive/trades": self._api_aggressive_trades,
-            "/api/aggressive/equity": self._api_aggressive_equity,
         }.get(api)
         if handler:
             try:
@@ -846,135 +765,6 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self._send_json([])
         finally:
             conn.close()
-
-    SMA200_DB = Path("/opt/hermes-trading-bot/data/sma200_state.db")
-
-    def _connect_sma200(self):
-        conn = sqlite3.connect(str(self.SMA200_DB), timeout=5.0, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def _api_sma200_status(self):
-        data = {"equity": 5000.0, "positions": 0, "total_trades": 0, "win_rate": 0, "profit_factor": 0, "avg_r": 0}
-        try:
-            conn = self._connect_sma200()
-            # Count open positions
-            pos = conn.execute("SELECT COUNT(*) as c FROM positions WHERE status='open'").fetchone()
-            data["positions"] = pos["c"] if pos else 0
-            # All trades
-            rows = conn.execute("SELECT r, pnl_dollars FROM trades").fetchall()
-            data["total_trades"] = len(rows)
-            if rows:
-                wins = [r for r in rows if r["r"] > 0]
-                losses = [r for r in rows if r["r"] <= 0]
-                data["win_rate"] = round(len(wins) / len(rows), 3) if rows else 0
-                total_loss = abs(sum(r["pnl_dollars"] for r in losses)) if losses else 1
-                data["profit_factor"] = round(
-                    sum(r["pnl_dollars"] for r in wins) / max(total_loss, 0.01), 2)
-                data["avg_r"] = round(sum(r["r"] for r in rows) / len(rows), 3)
-            conn.close()
-        except Exception as e:
-            data["error"] = str(e)
-        self._send_json(data)
-
-    def _api_sma200_trades(self):
-        try:
-            conn = self._connect_sma200()
-            rows = conn.execute(
-                "SELECT * FROM trades ORDER BY exit_ts DESC LIMIT 50"
-            ).fetchall()
-            self._send_json([dict(r) for r in rows])
-            conn.close()
-        except Exception:
-            self._send_json([])
-
-    def _api_sma200_positions(self):
-        try:
-            conn = self._connect_sma200()
-            rows = conn.execute("SELECT * FROM positions WHERE status='open'").fetchall()
-            positions = []
-            for r in rows:
-                d = dict(r)
-                d["current_pnl"] = 0.0
-                positions.append(d)
-            conn.close()
-            self._send_json(positions)
-        except Exception:
-            self._send_json([])
-
-    def _api_sma200_equity(self):
-        self._send_json([])
-
-    def _connect_aggressive(self):
-        if not getattr(self, 'compare_db_path', None) or not Path(str(self.compare_db_path)).exists():
-            return None
-        conn = sqlite3.connect(str(self.compare_db_path), timeout=5.0, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def _api_aggressive_status(self):
-        data = {"equity": 0, "peak_equity": 0, "total_trades": 0, "win_rate": 0, "profit_factor": 0, "sharpe": 0, "sortino": 0, "drawdown_duration_hours": 0, "gross_exposure": 0, "effective_leverage": 0, "mode": "paper", "daily_pnl_pct": 0, "allow_entry": True}
-        try:
-            conn = self._connect_aggressive()
-            if conn is None:
-                self._send_json(data)
-                return
-            pe = conn.execute("SELECT value FROM state WHERE key='paper_equity'").fetchone()
-            pp = conn.execute("SELECT value FROM state WHERE key='paper_peak_equity'").fetchone()
-            if pe: data["equity"] = round(float(pe["value"].strip('\"').strip("'")), 2)
-            if pp: data["peak_equity"] = round(float(pp["value"].strip('\"').strip("'")), 2)
-            cnt = conn.execute("SELECT COUNT(*) as c FROM trades").fetchone()
-            data["total_trades"] = cnt["c"] if cnt else 0
-            all_t = conn.execute("SELECT pnl_dollars FROM trades").fetchall()
-            if all_t:
-                wins = [t["pnl_dollars"] for t in all_t if t["pnl_dollars"] > 0]
-                losses = [t["pnl_dollars"] for t in all_t if t["pnl_dollars"] < 0]
-                data["win_rate"] = round(len(wins) / len(all_t), 3) if all_t else 0
-                total_loss = abs(sum(losses)) if losses else 1
-                data["profit_factor"] = round(sum(wins) / max(total_loss, 0.01), 2)
-            conn.close()
-        except Exception as e:
-            data["error"] = str(e)
-        self._send_json(data)
-
-    def _api_aggressive_positions(self):
-        try:
-            conn = self._connect_aggressive()
-            if conn is None:
-                self._send_json([])
-                return
-            state = conn.execute("SELECT value FROM state WHERE key='positions'").fetchone()
-            conn.close()
-            if state:
-                self._send_json(json.loads(state["value"]))
-            else:
-                self._send_json([])
-        except Exception:
-            self._send_json([])
-
-    def _api_aggressive_trades(self):
-        try:
-            conn = self._connect_aggressive()
-            if conn is None:
-                self._send_json([])
-                return
-            rows = conn.execute("SELECT * FROM trades ORDER BY id DESC LIMIT 50").fetchall()
-            conn.close()
-            self._send_json([dict(r) for r in rows])
-        except Exception:
-            self._send_json([])
-
-    def _api_aggressive_equity(self):
-        try:
-            conn = self._connect_aggressive()
-            if conn is None:
-                self._send_json([])
-                return
-            rows = conn.execute("SELECT equity, peak_equity, timestamp FROM equity_snapshots ORDER BY id DESC LIMIT 500").fetchall()
-            conn.close()
-            self._send_json([{"equity": r["equity"], "peak": r["peak_equity"], "ts": r["timestamp"]} for r in rows][::-1])
-        except Exception:
-            self._send_json([])
 
     def log_message(self, fmt, *args):
         pass
