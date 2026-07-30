@@ -33,6 +33,7 @@ from src.adapters.coinbase_advanced import CoinbaseAdvancedAdapter
 from src.adapters.kalshi import KalshiAdapter
 from src.core.execution_engine import ExecutionEngine
 from src.core.risk_governor import RiskGovernor
+from src.core.walk_forward import WalkForwardEngine
 from src.core.reconciliation import ReconciliationService
 from src.core.experiment_registry import ExperimentRegistry
 from src.core.event_kill import EventKillSwitch
@@ -55,12 +56,23 @@ from src.strategies.base import PerpStrategy
 from src.strategies.xs_momentum import CrossSectionalMomentum
 from src.strategies.trend_4h import Trend4h
 from src.strategies.fade_5m import Fade5m
+from src.core.regime import RegimeDetector
 
 logger = logging.getLogger("hermes.loop")
 
-ASSET_UNIVERSE = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK",
-                    "DOT", "AAVE", "LTC", "NEAR", "SUI", "XLM", "HBAR", "BCH",
-                    "ZEC", "PEPE", "SHIB", "HYPE", "ONDO", "ENA"]
+def _compute_buy_hold_benchmark() -> float:
+    try:
+        import sqlite3
+        db = sqlite3.connect("/opt/hermes-trading-bot/data/hermes.db")
+        row = db.execute("SELECT equity FROM equity_snapshots ORDER BY id ASC LIMIT 1").fetchone()
+        start_equity = row[0] if row else 5000.0
+        db.close()
+        return start_equity
+    except:
+        return 5000.0
+
+
+ASSET_UNIVERSE = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT", "AAVE", "LTC", "NEAR", "SUI", "XLM", "HBAR", "BCH", "ZEC", "PEPE", "SHIB", "HYPE", "ONDO", "ENA"]
 MIN_ENTRY_CONFIDENCE = 0.70
 
 
@@ -102,6 +114,7 @@ class TradingLoop:
         self.signal_cache: dict[str, list[Signal]] = defaultdict(list)
         self._stop_event = asyncio.Event()
         self._suggested_params: list[dict] = []
+        self._last_auto_apply_ts: float = 0.0
         self._daily_signals_log: list[dict] = []
         self.governor = RiskGovernor(
             self.store,
@@ -120,10 +133,13 @@ class TradingLoop:
         self._ic_budget_cycle = 0
         self._event_kill = EventKillSwitch()
         self._block_reasons: dict[str, int] = {}
-        token = self.config.get("telegram", {}).get("bot_token") or os.environ.get("HERMES_TELEGRAM_BOT_TOKEN", "")
-        chat_id = self.config.get("telegram", {}).get("chat_id") or os.environ.get("HERMES_TELEGRAM_CHAT_ID", "")
-        self.telegram = TelegramBot(token, chat_id, self.store)
-        self.notifier = self.telegram
+        self._loss_cooldowns: dict[str, float] = {}  # f"{asset}_{side}" -> expiry_ts
+        if not hasattr(self, 'telegram') or not self.telegram:
+            token = self.config.get("telegram", {}).get("bot_token") or os.environ.get("HERMES_TELEGRAM_BOT_TOKEN", "")
+            chat_id = self.config.get("telegram", {}).get("chat_id") or os.environ.get("HERMES_TELEGRAM_CHAT_ID", "")
+            self.telegram = TelegramBot(token, chat_id, self.store)
+            self.regime = RegimeDetector()
+            self.notifier = self.telegram
         self._sent_alerts: dict[str, float] = {}  # rate-limit alerts (key -> timestamp)
 
     def _restore_paper_positions(self, exchange: ExecutionEngine):
@@ -143,11 +159,35 @@ class TradingLoop:
         exchange = ExecutionEngine(
             initial_balance=initial,
             spread_bps=3,
-            taker_fee=0.00025,
+            taker_fee=0.0006,
             seed=42,
         )
         self._restore_paper_positions(exchange)
         self._restore_risk_state()
+        # Fix 1: Auto-apply pending param changes from weekly reflection
+        try:
+            pending_raw = self.store.get_state("pending_param_changes")
+            if pending_raw:
+                pending = json.loads(pending_raw) if isinstance(pending_raw, str) else pending_raw
+                if isinstance(pending, list):
+                    for change in pending:
+                        strat_name = change.get("strategy", "")
+                        param = change.get("parameter", change.get("param", ""))
+                        value = change.get("suggested_value", change.get("value", 0))
+                        if not strat_name or not param:
+                            continue
+                        found = False
+                        for s in self.strategies:
+                            if s.name() == strat_name and hasattr(s, "set_param"):
+                                s.set_param(param, value)
+                                found = True
+                        if found:
+                            logger.info("AUTO-APPLIED: %s.%s = %s", strat_name, param, value)
+                            self._last_auto_apply_ts = time.time()
+                self.store.put_state("pending_param_changes", "")  # clear after apply
+        except Exception as e:
+            logger.debug("auto-apply pending params: %s", e)
+
         # RiskGovernor: check latched kill state
         if self.governor.is_killed():
             kill_info = self.governor.get_kill_info()
@@ -187,6 +227,24 @@ class TradingLoop:
             logger.warning("RECONCILIATION: startup barrier FAILED -- %s", barrier.errors)
             self.governor.trigger_kill(KillSwitchReason.RECONCILIATION_FAILURE)
         asyncio.ensure_future(self.reconciliation.continuous_reconciliation())
+
+        # RiskGovernor auto-trigger: check daily drawdown from trades
+        try:
+            import json
+            today_trades = self.store.trades(limit=50)
+            if today_trades:
+                today_entries = [t for t in today_trades if t.get("exit_time","").startswith(datetime.now(timezone.utc).strftime("%Y-%m-%d"))]
+                if today_entries:
+                    total_pnl = sum(float(t.get("pnl_dollars",0)) for t in today_entries if t.get("pnl_dollars"))
+                    initial_eq = float(self.store.get_state("paper_equity") or self.config.get("exchange",{}).get("initial_balance",10000))
+                    if initial_eq > 0:
+                        daily_dd = total_pnl / initial_eq
+                        if daily_dd < -0.04:
+                            from src.core.risk_governor import KillSwitchReason
+                            self.governor.trigger_kill(KillSwitchReason.DAILY_LOSS_LIMIT)
+                            logger.warning("RiskGovernor auto-triggered: daily drawdown %.2f%% exceeds 4%% threshold", daily_dd * 100)
+        except Exception as e:
+            logger.debug("RiskGovernor auto-trigger check: %s", e)
 
         asyncio.ensure_future(self.notifier.bot_started(exchange.equity))
         asyncio.ensure_future(self.telegram.start_polling())
@@ -380,6 +438,30 @@ class TradingLoop:
         except Exception as e:
             logger.debug("save cooldowns: %s", e)
 
+    def _restore_loss_cooldowns(self) -> None:
+        try:
+            raw = self.store.get_state("loss_cooldowns")
+            if raw:
+                saved = json.loads(raw) if isinstance(raw, str) else raw
+                now = time.time()
+                self._loss_cooldowns = {k: v for k, v in saved.items() if v > now}
+                expired = len(saved) - len(self._loss_cooldowns)
+                if expired:
+                    logger.info("Loss cooldowns restored: %d active, %d expired", len(self._loss_cooldowns), expired)
+                elif self._loss_cooldowns:
+                    logger.info("Loss cooldowns restored: %d active", len(self._loss_cooldowns))
+        except Exception as e:
+            logger.debug("restore loss cooldowns: %s", e)
+            self._loss_cooldowns = {}
+
+    def _save_loss_cooldowns(self) -> None:
+        try:
+            now = time.time()
+            active = {k: v for k, v in self._loss_cooldowns.items() if v > now}
+            self.store.put_state("loss_cooldowns", json.dumps(active))
+        except Exception as e:
+            logger.debug("save loss cooldowns: %s", e)
+
     def _send_alert_ratelimited(self, key: str, message: str, min_interval: float = 3600.0) -> None:
         now = time.time()
         last = self._sent_alerts.get(key, 0.0)
@@ -388,6 +470,25 @@ class TradingLoop:
             asyncio.ensure_future(self.notifier.send(message))
 
     async def _cycle(self, hl: ExchangeAdapter, exchange: ExecutionEngine):
+        # Gap 1: Mid-cycle suggestion apply — read pending changes every cycle
+        try:
+            raw = self.store.get_state("pending_param_changes")
+            if raw and isinstance(raw, str) and raw.startswith("["):
+                pending = __import__('json').loads(raw)
+                if isinstance(pending, list) and pending:
+                    for change in pending:
+                        strat_name = change.get("strategy", "")
+                        param = change.get("parameter", change.get("param", ""))
+                        value = change.get("suggested_value", change.get("value", 0))
+                        if not strat_name or not param:
+                            continue
+                        for s in self.strategies:
+                            if s.name() == strat_name and hasattr(s, "set_param"):
+                                s.set_param(param, value)
+                    self.store.put_state("pending_param_changes", "")
+        except Exception as e:
+            __import__('logging').getLogger(__name__).debug("mid-cycle apply: %s", e)
+
         if self._cycle_count % 5 == 0:
             logger.info("heartbeat cycle=%d", self._cycle_count)
 
@@ -421,7 +522,7 @@ class TradingLoop:
         # Load dynamic thresholds from closed_loop.py and inject into strategies
         try:
             raw = self.store.get_state("dynamic_thresholds")
-            if raw:
+            if raw and (time.time() - getattr(self, '_last_auto_apply_ts', 0.0)) >= 3600:
                 thresholds = json.loads(raw) if isinstance(raw, str) else raw
                 for strat in self.strategies:
                     if hasattr(strat, "set_dynamic_thresholds"):
@@ -434,6 +535,7 @@ class TradingLoop:
         token = self.config.get("telegram", {}).get("bot_token") or os.environ.get("HERMES_TELEGRAM_BOT_TOKEN", "")
         chat_id = self.config.get("telegram", {}).get("chat_id") or os.environ.get("HERMES_TELEGRAM_CHAT_ID", "")
         self.telegram = TelegramBot(token, chat_id, self.store)
+        self.regime = RegimeDetector()
         self.notifier = self.telegram
         try:
             raw = self.store.get_state("strategy_budget")
@@ -442,11 +544,14 @@ class TradingLoop:
                 self._strategy_budget = sb.get("weights", {})
         except Exception as e:
             logger.debug("strategy budget: %s", e)
-        # Phase 3: trend_4h 60%, xs_momentum 25%, fade_5m 15%
-        self._strategy_budget["xs_momentum"] = 0.25
-        self._strategy_budget["trend_4h"] = 0.60
-        self._strategy_budget["fade_5m"] = 0.15
+        # Safety clamp: normalize budget fractions if sum deviates from 1.0
+        if self._strategy_budget:
+            total_budget = sum(self._strategy_budget.get(s, 0) for s in ["xs_momentum","trend_4h","fade_5m"])
+            if abs(total_budget - 1.0) > 0.05 and total_budget > 0:
+                for k in self._strategy_budget:
+                    self._strategy_budget[k] = self._strategy_budget[k] / total_budget
         self._restore_strategy_cooldowns()
+        self._restore_loss_cooldowns()
         self._import_file_intents()
         # 1. Fetch market data
         try:
@@ -699,6 +804,31 @@ class TradingLoop:
         self.risk.update_equity(eq, ge)
         self.risk.set_gross_exposure(ge)
         self.store.save_equity_snapshot(eq, self.risk.peak_equity)
+        buy_hold = _compute_buy_hold_benchmark()
+        self.store.put_state("buy_hold_equity", str(round(buy_hold, 2)))
+
+        # Walk-forward validation (daily)
+        if self._cycle_count % 1440 == 0 and self._cycle_count > 0:
+            try:
+                wf_trades = self.store.trades(limit=100)
+                if len(wf_trades) >= 40:
+                    from src.core.walk_forward import WalkForwardEngine
+                    splitter = WalkForwardEngine(n_trials=min(5, len(wf_trades) // 20))
+                    folds = list(splitter.split(wf_trades))
+                    if folds:
+                        sharpes = []
+                        import statistics
+                        for _, test_idx in folds[:3]:
+                            test_r = [t.get("r_multiple", 0) for i, t in enumerate(wf_trades) if i in test_idx and t.get("r_multiple", 0) != 0]
+                            if len(test_r) >= 5:
+                                mu = sum(test_r) / len(test_r)
+                                sigma = statistics.stdev(test_r) if len(test_r) > 1 else 1.0
+                                sharpes.append(mu / sigma if sigma > 0 else 0)
+                        if sharpes:
+                            wf_sharpe = sum(sharpes) / len(sharpes)
+                            self.store.put_state("wf_forward_sharpe", str(round(wf_sharpe, 4)))
+            except Exception as e:
+                logger.debug("walk-forward: %s", e)
         self.store.put_state("paper_equity", str(exchange.balance))
         self.store.put_state("paper_peak_equity", str(self.risk.peak_equity))
         await self.notifier.daily_drawdown(eq, self.risk.peak_equity,
@@ -709,14 +839,15 @@ class TradingLoop:
         if self._ic_budget_cycle % 30 == 0:
             try:
                 from src.core.ic_allocator import compute_weights
-                weights = compute_weights(db_path=str(self.data_dir / 'hermes.db'))
+                weights = compute_weights(db_path=str(self.data_dir / 'hermes.db'), strategies=self.strategies)
                 budget = {"weights": weights, "source": "ic_rollingsharpe", "timestamp": time.time()}
                 self.store.put_state("strategy_budget", json.dumps(budget))
                 self._strategy_budget = weights
-                # Phase 3: override allocator
-                self._strategy_budget["xs_momentum"] = 0.25
-                self._strategy_budget["trend_4h"] = 0.60
-                self._strategy_budget["fade_5m"] = 0.15
+                # Safety clamp: normalize budget fractions if sum deviates from 1.0
+                total_budget = sum(self._strategy_budget.get(s, 0) for s in ["xs_momentum","trend_4h","fade_5m"])
+                if abs(total_budget - 1.0) > 0.05 and total_budget > 0:
+                    for k in self._strategy_budget:
+                        self._strategy_budget[k] = self._strategy_budget[k] / total_budget
                 logger.info("IC_BUDGET: %s", {k: round(v,3) for k, v in weights.items()})
             except Exception as e:
                 logger.error("IC budget failed: %s", e)
@@ -741,14 +872,15 @@ class TradingLoop:
                 pass
 
         # Self-heal: loss streak auto-reset — if stale and blocked, clear
-        gs = getattr(self.risk, 'global_loss_streak', 0)
+        gs = getattr(self.risk, '_global_loss_streak', 0)
         if gs >= 5 and self._cycle_count - getattr(self, '_last_entry_diag_cycle', 0) > 120:
             logger.warning("SELF-HEAL: GS=%d stale for 120+ cycles — clearing", gs)
-            self._global_loss_streak = 0
+            self.risk._global_loss_streak = 0
             self.risk.global_loss_streak = 0
             self.store.put_state("risk_global_loss_streak", "0")
         self._save_risk_state()
         self._save_strategy_cooldowns()
+        self._save_loss_cooldowns()
         self.store.put_state("altfins_cycle", str(self._altfins_cycle))
         self.store.put_state("ic_budget_cycle", str(self._ic_budget_cycle))
         self.store.put_state("positions", [
@@ -781,6 +913,139 @@ class TradingLoop:
                 self.store._conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
             except Exception:
                 pass
+
+    def _compute_sma200(self, asset: str) -> tuple[float, float, str]:
+        import httpx
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        today = now.strftime("%Y-%m-%d")
+        cache_key = f"sma200_{asset}"
+        cached = getattr(self, "_sma200_cache", {})
+        if cache_key in cached:
+            cached_date, cached_result = cached[cache_key]
+            if cached_date == today:
+                return cached_result
+        pid = f"{asset}-USD"
+        try:
+            resp = httpx.get(
+                f"https://api.exchange.coinbase.com/products/{pid}/candles",
+                params={"granularity": 86400, "limit": 210},
+                timeout=10
+            )
+            if resp.status_code != 200:
+                return 0.0, 0.0, "flat"
+            candles = sorted(resp.json(), key=lambda x: x[0])
+            import calendar
+            utc_now = datetime.now(timezone.utc)
+            last_start = candles[-1][0]
+            midnight = int(calendar.timegm(utc_now.date().timetuple()))
+            if last_start >= midnight and len(candles) >= 201:
+                closes = [c[4] for c in candles[-201:-1]]
+            else:
+                closes = [c[4] for c in candles[-200:]]
+            if len(closes) < 200:
+                return 0.0, 0.0, "flat"
+            sma = sum(closes) / 200
+            last_close = closes[-1]
+            side = "long" if last_close > sma else "short"
+            result = (sma, last_close, side)
+            if not hasattr(self, "_sma200_cache"):
+                self._sma200_cache = {}
+            self._sma200_cache[cache_key] = (today, result)
+            return result
+        except Exception:
+            return 0.0, 0.0, "flat"
+
+    def _get_daily_candles_for_regime(self, asset: str) -> list:
+        today = __import__('datetime').datetime.now(__import__('datetime').timezone.utc).strftime("%Y-%m-%d")
+        cache = getattr(self, "_regime_daily_cache", {})
+        if cache.get(asset, {}).get("date") == today:
+            return cache[asset]["candles"]
+        import httpx
+        try:
+            resp = httpx.get(
+                f"https://api.exchange.coinbase.com/products/{asset}-USD/candles",
+                params={"granularity": 86400, "limit": 210},
+                timeout=10
+            )
+            if resp.status_code != 200:
+                return []
+            raw = sorted(resp.json(), key=lambda x: x[0])
+            from src.core.types import Candle
+            candles = []
+            for c in raw:
+                candle = Candle(
+                    timestamp=int(c[0]),
+                    open=float(c[3]),
+                    high=float(c[2]),
+                    low=float(c[1]),
+                    close=float(c[4]),
+                    volume=float(c[5]),
+                )
+                candles.append(candle)
+            if not hasattr(self, "_regime_daily_cache"):
+                self._regime_daily_cache = {}
+            self._regime_daily_cache[asset] = {"date": today, "candles": candles}
+            return candles
+        except Exception:
+            return []
+
+    def _compute_atr(self, asset: str, period: int = 14) -> float:
+        """Compute 14-period ATR — 4h preferred, fallback 1h."""
+        candles = self.candle_4h_cache.get(asset, [])
+        if len(candles) < period + 1:
+            candles = self.candle_cache.get(asset, [])
+        if len(candles) < period + 1:
+            return 0.0
+        sorted_c = sorted(candles, key=lambda x: x.timestamp)
+        tr_sum = 0.0
+        for i in range(-period, 0):
+            h = sorted_c[i].high
+            l = sorted_c[i].low
+            pc = sorted_c[i - 1].close
+            tr = max(h - l, abs(h - pc), abs(l - pc))
+            tr_sum += tr
+        return tr_sum / period
+
+    _smakill_cache: float = 0.0
+    _smakill_cache_cycle: int = -999
+
+    def _sma200_net_pnl_28d(self) -> float:
+        """Net PnL of SMA200 perp trades in last 28 days (cached 60 cycles)."""
+        if hasattr(self, '_cycle_count') and self._cycle_count - getattr(self, '_smakill_cache_cycle', -999) < 60:
+            return self._smakill_cache
+        import sqlite3
+        db_path = str(self.data_dir / "hermes.db")
+        try:
+            db = sqlite3.connect(db_path)
+            row = db.execute(
+                "SELECT COALESCE(SUM(pnl_dollars), 0) FROM trades WHERE strategy='sma200_perp' AND exit_time >= datetime('now', '-28 days')"
+            ).fetchone()
+            db.close()
+            val = row[0] if row else 0.0
+            self._smakill_cache = val
+            self._smakill_cache_cycle = self._cycle_count
+            return val
+        except Exception:
+            return 0.0
+
+    def _kelly_factor_for_strategy(self, strategy: str) -> float:
+        trades = self.store.trades(limit=200)
+        strat_trades = [t for t in trades if t.get("strategy") == strategy and t.get("r_multiple", 0) != 0]
+        if len(strat_trades) < 20:
+            return 0.25  # lower risk while building trade history
+        wins = [abs(t.get("r_multiple", 0)) for t in strat_trades if t.get("r_multiple", 0) > 0]
+        losses = [abs(t.get("r_multiple", 0)) for t in strat_trades if t.get("r_multiple", 0) < 0]
+        wr = len(wins) / len(strat_trades)
+        avg_r_win = sum(wins) / len(wins) if wins else 0.5
+        avg_r_loss = sum(losses) / len(losses) if losses else 1.0
+        if avg_r_win <= 0 or avg_r_loss <= 0:
+            return 1.0
+        kelly = wr - (1 - wr) / (avg_r_win / avg_r_loss)
+        if kelly <= 0:
+            return 0.0
+        quarter = kelly * 0.25
+        return max(0.0, quarter)
 
     async def _process_asset(
         self,
@@ -864,6 +1129,7 @@ class TradingLoop:
                         await self._close(asset, pos, price, reason, exchange, close_pct)
                         if close_pct >= 1.0:
                             return
+                        pos.tp1_scaled = True
 
                 # BTC knife-guard time-stop: close longs held >60min during confirmed downtrend
                 if self._btc_knife_block and pos.side == Side.LONG:
@@ -880,8 +1146,11 @@ class TradingLoop:
                     upnl = float(getattr(pos, "unrealized_pnl", 0) or 0)
                     peak = float(getattr(pos, "peak_upnl", 0) or 0)
 
-                    # Skip max_age and stale checks for TP1-scaled positions (chandelier manages)
-                    if getattr(pos, 'tp1_scaled', False):
+                    # Resolve position strategy for SMA200 exemption
+                    strategy = getattr(pos, 'strategy', '') or getattr(pos, 'signal_source', '')
+                    # Skip max_age for TP1-scaled positions (chandelier manages) and SMA200 macro positions
+                    tp1_or_sma200 = getattr(pos, 'tp1_scaled', False) or strategy == 'sma200_perp'
+                    if tp1_or_sma200:
                         pass
                     # A. Max age: any position open >12h gets closed
                     elif age_min > 720:
@@ -889,16 +1158,60 @@ class TradingLoop:
                         await self._close(asset, pos, price, "portfolio_max_age", exchange)
                         return
 
-                    # B. Peak decay: profitable position decayed >50% from peak (min \, else let ride)
-                    if peak > 3:
+                    # B. Peak decay: profitable position decayed >N%% from peak (strategy-specific)
+                    # Research: momentum (XS/Trend) = 75%% retracement, mean-rev = 50%%
+                    # Skip peak decay for macro SMA200 positions — they need days/weeks to develop
+                    if strategy != 'sma200_perp' and peak > 3:
+                        _decay_threshold = 75 if strategy in ("xs_momentum", "trend_4h") else 50
                         decay_pct = (peak - upnl) / peak * 100
-                        if upnl > 0 and decay_pct > 50:
-                            logger.info("PORTFOLIO_SWEEP %s: upnl=$%.1f peak=$%.1f decay=%.0f%% -- closing", asset, upnl, peak, decay_pct)
+                        if upnl > 0 and decay_pct > _decay_threshold:
+                            logger.info("PORTFOLIO_SWEEP %s: upnl=$%.1f peak=$%.1f decay=%.0f%% > %d%% -- closing",
+                                        asset, upnl, peak, decay_pct, _decay_threshold)
                             await self._close(asset, pos, price, "portfolio_peak_decay", exchange)
                             return
 
-                    # C. Stale: open >60min with zero or negative PnL
-                    elif age_min > 60 and upnl <= 0:
+                    # SMA200 crossover exit: close SMA200 positions when signal reverses
+                    if strategy == 'sma200_perp':
+                        _, _, current_signal = self._compute_sma200(asset)
+                        cs = current_signal.upper()
+                        if (pos.side == Side.LONG and cs == 'SHORT') or                            (pos.side == Side.SHORT and cs == 'LONG'):
+                            logger.info("SMA200_CROSSOVER %s: %s at $%.2f signal flipped to %s -- closing",
+                                        asset, pos.side.name, price, current_signal)
+                            await self._close(asset, pos, price, "sma200_crossover", exchange)
+                            return
+                    # SMA200 stop-loss: close if stop_price breached for shorts
+                    if strategy == 'sma200_perp':
+                        sl = getattr(pos, 'stop_loss', None) or getattr(pos, 'stop_price', None)
+                        if sl and sl > 0:
+                            if pos.side == Side.SHORT and price > sl:
+                                logger.info("SMA200_STOP_LOSS %s: short at $%.4f stop=$%.4f -- closing",
+                                            asset, price, sl)
+                                await self._close(asset, pos, price, "sma200_stop_loss", exchange)
+                                return
+                            elif pos.side == Side.LONG and price < sl:
+                                logger.info("SMA200_STOP_LOSS %s: long at $%.4f stop=$%.4f -- closing",
+                                            asset, price, sl)
+                                await self._close(asset, pos, price, "sma200_stop_loss", exchange)
+                                return
+
+                    # SMA200 distance-banded time exit: stronger signal = longer hold
+                    if strategy == 'sma200_perp':
+                        sma_val, _, _ = self._compute_sma200(asset)
+                        if sma_val > 0:
+                            dist_pct = abs(price - sma_val) / sma_val * 100
+                            if dist_pct > 15:
+                                max_age_min = 10080
+                            elif dist_pct > 10:
+                                max_age_min = 8640
+                            else:
+                                max_age_min = 7200
+                            if age_min > max_age_min:
+                                logger.info("SMA200_TIME_EXIT %s: age=%.0fh dist=%.1f%% max=%.0fh -- closing",
+                                            asset, age_min/60, dist_pct, max_age_min/60)
+                                await self._close(asset, pos, price, "sma200_time_exit", exchange)
+                                return
+                    # C. Stale: open >60min with zero or negative PnL (non-SMA200 only)
+                    elif age_min > 720 and upnl <= 0:  # stale exit removed
                         logger.info("PORTFOLIO_SWEEP %s: stale %.0f min upnl=$%.1f -- closing", asset, age_min, upnl)
                         await self._close(asset, pos, price, "portfolio_stale", exchange)
                         return
@@ -917,15 +1230,19 @@ class TradingLoop:
         # 1h Hurst only covers 2 days; 4h covers 8 days — matches trend timeframe
         candles_4h = self.candle_4h_cache.get(asset, [])
         if len(candles_4h) >= 30:
-            primary_regime = self._infer_regime(asset, candles_4h, 30)
             regime = self._infer_regime(asset, candles_4h, 30)
         else:
-            primary_regime = self._infer_regime(asset, candles, 50)
             regime = self._infer_regime(asset, candles, 30)
+
+        # Reset CUSUM accumulators on TRENDING to prevent stuck state
+        if regime == RegimeType.TRENDING:
+            self._cusum.get(asset, {}).pop("S_high", None)
+            self._cusum.get(asset, {}).pop("S_low", None)
 
         # Dead market — skip entries entirely
         if regime == RegimeType.DEAD_MARKET and not pos:
             return
+
 
         # Check risk gates (primary regime influences risk budget)
         risk_ok, risk_msg = self.risk.allow_entry(exchange.gross_exposure, exchange.effective_leverage)
@@ -961,6 +1278,7 @@ class TradingLoop:
 
         cl_ok, cl_msg = self.risk.consecutive_loss_allows(asset)
         if not cl_ok:
+            logger.info("ENTRY_DIAG %s: skip -- consecutive_loss: %s", asset, cl_msg)
             return
 
         # Event kill: block entries around high-impact economic events
@@ -973,7 +1291,7 @@ class TradingLoop:
         for strat in self.strategies:
             # Skip if strategy is paused by sharpe_tracker
             if self._paused_strategies:
-                ps_names = [p.split()[0] for p in self._paused_strategies if " " in p]
+                ps_names = [p.split()[0] for p in self._paused_strategies if p]
                 if strat.name() in ps_names:
                     continue
             sig_bucket = f"{strat.name()}:{asset}"
@@ -1004,7 +1322,26 @@ class TradingLoop:
             min_threshold = self.risk.get_confidence_threshold(strat.name())
             if strat.name() == "xs_momentum":
                 min_threshold = 0.55
+            # Loss cooldown: skip this side if a large loss (R < -2.0) happened in last 6h
+            cd_key = f"{asset}_{side.name}"
+            cd_expiry = self._loss_cooldowns.get(cd_key, 0.0)
+            if cd_expiry > time.time():
+                remaining = (cd_expiry - time.time()) / 60
+                logger.info("ENTRY_DIAG %s %s: skip -- loss_cooldown %s (%.0fm remaining)", asset, strat.name(), side.name, remaining)
+                continue
+
+            # CUSUM regime gate: Trend4h needs trending, Fade5m needs ranging
+            if regime in (RegimeType.TRENDING, RegimeType.STRONGLY_TRENDING):
+                if strat.name() == "fade_5m":
+                    logger.info("ENTRY_DIAG %s %s: skip -- regime=%s blocks fade in trending", asset, strat.name(), regime.name)
+                    continue
+            else:
+                if strat.name() == "trend_4h":
+                    logger.info("ENTRY_DIAG %s %s: skip -- regime=%s blocks trend in non-trending", asset, strat.name(), regime.name)
+                    continue
+
             if confidence < min_threshold:
+                logger.info("ENTRY_DIAG %s %s: skip -- confidence %.3f < %.3f", asset, strat.name(), confidence, min_threshold)
                 continue
             # Per-strategy OI check (confidence-discounted — high conf overrides)
             if getattr(self, '_oi_blocked', False) and confidence < 0.60:
@@ -1024,15 +1361,17 @@ class TradingLoop:
                 continue
 
             entry_price = price
+            strat_name = strat.name()
+            kelly = self._kelly_factor_for_strategy(strat_name)
             qty, risk_dollars, max_notional = self.risk.position_size(
-                asset, exchange.equity, stop_pct, entry_price, exchange.gross_exposure
+                asset, exchange.equity, stop_pct, entry_price, exchange.gross_exposure,
+                kelly_fraction=kelly
             )
 
             if qty <= 0:
                 continue
 
             # Strategy budget scaling (based on 30d Sharpe)
-            strat_name = strat.name()
             budget_weight = self._strategy_budget.get(strat_name, 1.0)
             if budget_weight <= 0:
                 continue
@@ -1047,6 +1386,13 @@ class TradingLoop:
             mr_min_notional = max(1000.0, exchange.equity * 0.20)
             if strat_name == "mr" and qty * entry_price < mr_min_notional:
                 logger.debug("%s %s: notional $%.0f < $%.0f min — skipping", strat_name, asset, qty * entry_price, mr_min_notional)
+                continue
+            # Friction cost floor: all strategies need minimum notional so fees don't dominate edge
+            # Research: fees > 5%% of risk kills edge. Fee ~$0.63/trade, require notional > $300
+            # to keep fee < 2%% of risk on a 1%% risk trade
+            _min_notional = max(300.0, exchange.equity * 0.06)
+            if qty * entry_price < _min_notional:
+                logger.debug("%s %s: notional $%.0f < $%.0f — skipping (friction floor)", strat_name, asset, qty * entry_price, _min_notional)
                 continue
             if side == Side.SHORT:
                 stop_price = entry_price * (1 + stop_pct / 100)
@@ -1146,6 +1492,86 @@ class TradingLoop:
                 self.store.put_state("pending_param_changes", self._suggested_params)
                 logger.info("PENDING PARAM CHANGES: %d suggestions", len(self._suggested_params))
 
+        # Regime score [0-3] — gate SMA200 on trending regimes only
+        if hasattr(self, 'regime') and hasattr(self, '_get_daily_candles_for_regime'):
+            regime_candles = self._get_daily_candles_for_regime(asset)
+            if regime_candles:
+                regime_score, regime_hurst, regime_adx, regime_atrp = self.regime.score(asset, regime_candles)
+                if regime_score < 2:
+                    logger.info("ENTRY_DIAG %s: REGIME score=%d H=%.2f ADX=%.1f — SMA200 blocked (not trending)",
+                                asset, regime_score, regime_hurst, regime_adx)
+            else:
+                regime_score = 1
+        else:
+            regime_score = 1
+
+        # SMA200 kill criterion: permanently halt if 28d net PnL is negative
+        sma200_pnl = self._sma200_net_pnl_28d()
+        kill_key = "sma200_killed"
+        killed_raw = self.store.get_state(kill_key)
+        killed = killed_raw.get("value") if isinstance(killed_raw, dict) else bool(killed_raw) if isinstance(killed_raw, (bool, int)) else False
+        kill_threshold = -600.0
+        if killed and sma200_pnl < kill_threshold:
+            if self._cycle_count > getattr(self, '_smakill_logged_cycle', -1):
+                logger.warning("SMA200_KILLED: 28d pnl=$%.2f — SMA200 entries halted until PnL improves", sma200_pnl)
+                self._smakill_logged_cycle = self._cycle_count
+        elif sma200_pnl < kill_threshold:
+            if self._cycle_count > getattr(self, '_smakill_logged_cycle', -1):
+                logger.warning("SMA200_KILL: 28d pnl=$%.2f — halting SMA200 entries", sma200_pnl)
+                self._smakill_logged_cycle = self._cycle_count
+            self.store.put_state(kill_key, {"value": True, "pnl_28d": round(sma200_pnl, 2)})
+            killed = True
+        # SMA200 kill recovery: auto-clear if 28d PnL recovers above -$100
+        if killed and sma200_pnl >= -100.0:
+            logger.info("SMA200_KILL_RECOVER: 28d pnl=$%.2f — auto-clearing kill state", sma200_pnl)
+            self.store.put_state(kill_key, {"value": False, "pnl_28d": round(sma200_pnl, 2)})
+            killed = False
+
+        # SMA200 macro trend entry: if no strategy entered but SMA200 has clear direction
+        if not killed and regime_score >= 2 and not pos and len(exchange.positions) < self.risk.max_concurrent_positions and price > 0:
+            pass
+            sma, last_close, signal_side = self._compute_sma200(asset)
+            if sma > 0 and signal_side != "flat":
+                side = Side.LONG if signal_side == "long" else Side.SHORT
+                stop_pct, _ = self.risk.compute_stop_distance(asset, self.candle_4h_cache.get(asset, self.candle_cache.get(asset, [])))
+                lev = 2.0
+                entry_price = price
+                qty, risk_dollars, max_not = self.risk.position_size(
+                    asset, exchange.equity, stop_pct, entry_price, exchange.gross_exposure,
+                    kelly_fraction=self._kelly_factor_for_strategy("sma200_perp")
+                )
+                if qty > 0:
+                    notional = qty * entry_price
+                    if notional >= 200:
+                        # RiskGovernor: account-level check before SMA200 entry
+                        _gov_ok, _gov_msg = self.governor.check_entry(
+                            asset=asset, notional=notional,
+                            current_gross=exchange.gross_exposure,
+                            current_equity=exchange.equity,
+                            current_positions=len(getattr(exchange, '_active_positions', {})),
+                        )
+                        if not _gov_ok:
+                            logger.info("ENTRY_DIAG %s: skip -- governor: %s", asset, _gov_msg)
+                            return
+                        stop_price = (entry_price * (1 - stop_pct/100)) if side == Side.LONG else (entry_price * (1 + stop_pct/100))
+                        order = Order(
+                            asset=asset, side=side, order_type=OrderType.MARKET,
+                            quantity=qty, price=None, stop_price=stop_price,
+                            reduce_only=False, leverage=lev,
+                            metadata={"component_sources": ["sma200_perp"]},
+                        )
+                        order_id = await exchange.place_order(order)
+                        if order_id:
+                            p = exchange.positions.get(asset)
+                            if p:
+                                p.strategy = "sma200_perp"
+                                p.signal_source = "sma200_perp"
+                                p.entry_confidence = 0.80
+                                p.stop_loss = stop_price
+                            self.risk.record_position_open(asset)
+                            logger.info("SMA200_PERP %s %s qty=%.4f @ %.0f stop=%.0f lev=%.1fx risk=$%.0f",
+                                side.value.upper(), asset, qty, entry_price, stop_price, lev, risk_dollars)
+
     async def _process_external_intents(self, exchange: ExecutionEngine, hl: ExchangeAdapter):
         for row in self.store.pending_intents(limit=25):
             try:
@@ -1167,6 +1593,14 @@ class TradingLoop:
         if intent.confidence < conf_gate:
             return False, f"confidence_below_gate: {intent.confidence:.2f} >= {conf_gate:.2f}"
 
+        # Paused_strategies check: reject intents for paused strategies
+        self._paused_strategies = self._paused_strategies or []
+        _ps_names = [p.split()[0] for p in self._paused_strategies if p]
+        if intent.strategy in _ps_names:
+            self._last_entry_diag_cycle = self._cycle_count
+            logger.info("INTENT_DIAG %s: skip -- paused_strategy %s", intent.asset, intent.strategy)
+            return False, f"paused: {intent.strategy}"
+
         existing = await exchange.fetch_position(intent.asset)
         if existing:
             return False, "position_already_open"
@@ -1178,18 +1612,18 @@ class TradingLoop:
 
         risk_ok, risk_msg = self.risk.allow_entry(exchange.gross_exposure, exchange.effective_leverage)
         if not risk_ok:
-            logger.info("ENTRY_DIAG %s: skip -- risk: %s", asset, risk_msg)
+            logger.info("INTENT_DIAG %s: skip -- risk: %s", intent.asset, risk_msg)
             return False, risk_msg
         oi_ok, oi_msg = self.risk.oi_gate_allows(intent.asset)
         if not oi_ok:
             self._last_entry_diag_cycle = self._cycle_count
-            logger.info("ENTRY_DIAG %s: skip -- OI: %s", asset, oi_msg)
+            logger.info("INTENT_DIAG %s: skip -- OI: %s", intent.asset, oi_msg)
             return False, oi_msg
         funding_rate = await hl.get_funding_rate(intent.asset)
         funding_ok, funding_msg = self.risk.funding_gate(funding_rate)
         if not funding_ok:
             self._last_entry_diag_cycle = self._cycle_count
-            logger.info("ENTRY_DIAG %s: skip -- funding: %s", asset, funding_msg)
+            logger.info("INTENT_DIAG %s: skip -- funding: %s", intent.asset, funding_msg)
             return False, funding_msg
 
         stop_price = intent.requested_stop_price
@@ -1210,7 +1644,8 @@ class TradingLoop:
         safe_lev, lev_reason = self.risk.compute_leverage(intent.asset, candles, intent.side)
         leverage = max(1.0, min(intent.requested_leverage, safe_lev, self.risk.max_portfolio_leverage))
         qty, risk_dollars, _ = self.risk.position_size(
-            intent.asset, exchange.equity, stop_pct, entry_price, exchange.gross_exposure
+            intent.asset, exchange.equity, stop_pct, entry_price, exchange.gross_exposure,
+            kelly_fraction=self._kelly_factor_for_strategy(intent.strategy)
         )
         if qty <= 0:
             return False, "no_remaining_exposure_capacity"
@@ -1438,7 +1873,9 @@ class TradingLoop:
 
         # Record trade in risk manager
         if close_pct < 1.0:
-            self.risk.record_trade(asset, trade.pnl_pct, trade.pnl_dollars, reason)
+            # Scale down peak_upnl to match reduced position size
+            if hasattr(pos, "peak_upnl"):
+                pos.peak_upnl = (pos.peak_upnl or 0) * close_pct
             self.store.save_trade(asdict(trade))
             return
 
@@ -1449,6 +1886,15 @@ class TradingLoop:
         self.risk.record_trade(asset, pnl_pct, pnl_dollars, reason)
         self.risk.record_position_close(asset)
         self.risk.record_sleeve_outcome(pos.strategy or "", pnl_dollars)
+        # Loss cooldown: R < -2.0 = regime mismatch, block same asset+side for 6h
+        if hasattr(trade, 'r_multiple') and trade.r_multiple < -2.0:
+            side_label = "LONG" if pos.side == Side.LONG else "SHORT"
+            cd_key = f"{asset}_{side_label}"
+            expiry = time.time() + 21600  # 6 hours
+            self._loss_cooldowns[cd_key] = expiry
+            logger.warning("LOSS_COOLDOWN %s %s: R=%.2f < -2.0 — blocked until %s",
+                          asset, side_label, trade.r_multiple,
+                          datetime.fromtimestamp(expiry, tz=timezone.utc).strftime("%H:%M UTC"))
         self.signal_tracker.record(trade.signal_source, pnl_dollars > 0)
         for source in getattr(pos, "component_sources", []):
             self.signal_tracker.record(source, pnl_dollars > 0)
@@ -1505,6 +1951,10 @@ class TradingLoop:
         reflection = self.reflector.reflect(trades, params)
         self.store.put_state("weekly_reflection", reflection)
         self._suggested_params = reflection["suggestions"]
+        # Persist suggestions immediately so they survive restart
+        if self._suggested_params:
+            self.store.put_state("pending_param_changes", json.dumps(self._suggested_params))
+            logger.info("PENDING PARAM CHANGES: %d suggestions persisted", len(self._suggested_params))
 
         logger.info("=== WEEKLY REFLECTION ===")
         logger.info("Trades: %d | Sharpe: %.2f | Win rate: %.0f%%",

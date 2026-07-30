@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 
 
 class Fade5m(PerpStrategy):
+    PARAM_BOUNDS = {
+        "z_entry_major": {"min": 1.5, "max": 5.0},
+        "z_entry_alt": {"min": 2.0, "max": 5.5},
+        "stop_atr_mult": {"min": 0.5, "max": 3.0},
+        "target_atr_mult": {"min": 1.0, "max": 5.0},
+        "cooldown_cycles": {"min": 5, "max": 100},
+    }
     def __init__(
         self,
         sma_period: int = 20,
@@ -47,6 +54,18 @@ class Fade5m(PerpStrategy):
         self.majors = majors or {"BTC", "ETH"}
         self.signal_tracker = signal_tracker
         self._cooldowns: dict[str, int] = {}
+    def set_dynamic_thresholds(self, thresholds: dict) -> None:
+        self._dynamic_thresholds = thresholds or {}
+        if thresholds and "fade_win_rate_20" in thresholds:
+            wr = thresholds["fade_win_rate_20"]
+            if wr < 0.40:
+                self.z_entry_major = min(self.z_entry_major + 0.5, 4.0)
+                self.z_entry_alt = min(self.z_entry_alt + 0.5, 4.5)
+            elif wr > 0.60:
+                self.z_entry_major = max(self.z_entry_major - 0.5, 2.0)
+                self.z_entry_alt = max(self.z_entry_alt - 0.5, 2.5)
+        logger = __import__('logging').getLogger(__name__)
+        logger.debug("FADE_5M z_entry_major=%.1f z_entry_alt=%.1f", self.z_entry_major, self.z_entry_alt)
 
     def name(self) -> str:
         return "fade_5m"

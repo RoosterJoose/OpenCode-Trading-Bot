@@ -6,6 +6,8 @@ from src.core.types import PerpCandle, PerpPosition, RegimeType, Side, Signal
 
 class PerpStrategy(ABC):
     ALTFINS_WEIGHT = 0.15
+    PARAM_BOUNDS: dict = {}
+
 
     @staticmethod
     def blend_altfins_confidence(local_confidence: float, altfins_signals: list) -> float:
@@ -31,6 +33,22 @@ class PerpStrategy(ABC):
     def set_dynamic_thresholds(self, thresholds: dict) -> None:
         """Inject per-asset threshold adjustments from closed_loop.py"""
         self._dynamic_thresholds = thresholds or {}
+    def set_param(self, key: str, value: float) -> None:
+        if key in self.PARAM_BOUNDS:
+            b = self.PARAM_BOUNDS[key]
+            orig = value
+            if "min" in b and value < b["min"]:
+                value = b["min"]
+            if "max" in b and value > b["max"]:
+                value = b["max"]
+            if value != orig:
+                __import__('logging').getLogger(__name__).warning(
+                    "PARAM_CLAMP %s.%s: %.4f clamped to [%.4f, %.4f]",
+                    self.name(), key, orig, b.get("min",-1e9), b.get("max",1e9))
+        if hasattr(self, key):
+            setattr(self, key, value)
+            __import__('logging').getLogger(__name__).info("PARAM_SET %s: %s = %.4f", self.name(), key, value)
+
 
     def _get_threshold(self, asset: str, param: str, default: Any):
         """Get a dynamic threshold for an asset+param, falling back to default."""

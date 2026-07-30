@@ -1,18 +1,13 @@
-#!/usr/bin/env python3
-"""IC Allocator v2 — Stein-shrunk rolling Sharpe + partial transition."""
+"""IC Allocator v3 — strategy-agnostic, accepts strategy list from caller."""
 import sqlite3, json, statistics, time, sys
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Any
 
-DB_PATH = "/opt/hermes-trading-bot/data/hermes.db"
-
-WINDOWS = {"trend": 20, "mr": 5, "xs_momentum": 15}
-ALL_STRATS = list(WINDOWS.keys())
 MIN_TRADES = 6
-MIN_WEIGHT = 0.15
+MIN_WEIGHT = 0.00
 MAX_WEIGHT = 0.50
-STEIN_SHRINKAGE = 0.7  # weight toward long-term average (0=no shrinkage, 1=full)
-TRANSITION_SMOOTHING = 0.025  # fraction toward target per refresh
+STEIN_SHRINKAGE = 0.7
+TRANSITION_SMOOTHING = 0.025
 
 
 @dataclass
@@ -47,24 +42,31 @@ def _load_previous_weights(db_path: str) -> dict:
         conn.close()
         if raw:
             data = json.loads(raw[0])
-            last = data.get("weights", {})
-            return last
+            return data.get("weights", {})
     except Exception:
         pass
     return {}
 
 
-def compute_weights(db_path: str = DB_PATH) -> dict:
+def compute_weights(db_path: str = "", strategies: Optional[list[Any]] = None) -> dict:
+    """Compute budget weights from trade history using rolling Sharpe.
+
+    Accepts a list of strategy objects (with .name() method) to determine
+    which strategies to allocate between. If no strategies provided, falls
+    back to equal weights.
+    """
+    if not strategies or not db_path:
+        return {}
+
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
-    # Load previous weights for smoothing
     prev = _load_previous_weights(db_path)
-
+    strat_names = [s.name() for s in strategies]
     sleeves: dict[str, SleeveStats] = {}
 
-    for strat in ALL_STRATS:
-        window = WINDOWS.get(strat, 10)
+    for strat in strat_names:
+        window = 15
         rows = conn.execute(
             "SELECT r_multiple FROM trades"
             " WHERE strategy=? AND r_multiple IS NOT NULL"
@@ -73,7 +75,6 @@ def compute_weights(db_path: str = DB_PATH) -> dict:
         ).fetchall()
         r_vals = [r["r_multiple"] for r in rows]
 
-        # Also load all-time trades for Stein shrinkage
         all_rows = conn.execute(
             "SELECT r_multiple FROM trades"
             " WHERE strategy=? AND r_multiple IS NOT NULL"
@@ -90,19 +91,16 @@ def compute_weights(db_path: str = DB_PATH) -> dict:
         sharp = _sharpe(r_vals)
         avg_r = sum(r_vals) / n
 
-        # Stein shrinkage: blend short-term Sharpe with long-term
         if sharp is not None and len(all_r) > window:
-            all_sharpe = _sharpe(all_r[window:])  # long-term only
+            all_sharpe = _sharpe(all_r[window:])
             if all_sharpe is not None:
-                # Shrink toward long-term mean
                 shrunk_sharpe = (1 - STEIN_SHRINKAGE) * sharp + STEIN_SHRINKAGE * all_sharpe
             else:
                 shrunk_sharpe = sharp
         else:
             shrunk_sharpe = sharp or 0.0
 
-        # Score: no raw PnL, just shrunk Sharpe + avg_r for directionality
-        trade_factor = min(total / 20.0, 1.0) if (total := n) else 1.0
+        trade_factor = min(n / 20.0, 1.0)
         score = max(0.0, shrunk_sharpe * 0.6 * trade_factor + avg_r * 5.0 * trade_factor)
 
         sleeves[strat] = SleeveStats(trades=n, avg_r=avg_r, sharpe=shrunk_sharpe, score=score)
@@ -112,18 +110,15 @@ def compute_weights(db_path: str = DB_PATH) -> dict:
     weights = {s: sl.score for s, sl in sleeves.items()}
     total = sum(weights.values())
     if total <= 0:
-        return {s: 1.0 / len(ALL_STRATS) for s in ALL_STRATS}
+        return {s: 1.0 / len(strat_names) for s in strat_names}
 
-    # Normalize, excluding donchian from the pool
-    norm: dict[str, float] = {s: w / total for s, w in weights.items()}
+    norm = {s: w / total for s, w in weights.items()}
 
-    # Apply smoothing toward previous weights
     for s in norm:
         if s in prev and prev[s] > 0:
             norm[s] = prev[s] + TRANSITION_SMOOTHING * (norm[s] - prev[s])
 
-    # Caps and floor on IC strats
-    for s in ALL_STRATS:
+    for s in strat_names:
         v = norm.get(s, MIN_WEIGHT)
         if v < MIN_WEIGHT:
             norm[s] = MIN_WEIGHT

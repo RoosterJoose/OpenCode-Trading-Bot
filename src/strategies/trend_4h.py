@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 
 
 class Trend4h(PerpStrategy):
+    PARAM_BOUNDS = {
+        "atr_mult": {"min": 1.5, "max": 8.0},
+        "breakout_period": {"min": 10, "max": 40},
+        "time_exit_hours": {"min": 24.0, "max": 720.0},
+        "cooldown_cycles": {"min": 10, "max": 500},
+    }
     def __init__(
         self,
         breakout_period: int = 20,
@@ -41,6 +47,16 @@ class Trend4h(PerpStrategy):
         self.majors = majors or {"BTC", "ETH"}
         self.signal_tracker = signal_tracker
         self._cooldowns: dict[str, int] = {}
+    def set_dynamic_thresholds(self, thresholds: dict) -> None:
+        self._dynamic_thresholds = thresholds or {}
+        if thresholds and "vol_percentile_24h" in thresholds:
+            vol = thresholds["vol_percentile_24h"]
+            if vol > 0.80:
+                self.atr_mult = min(self.atr_mult * 1.5, 8.0)
+            elif vol < 0.20:
+                self.atr_mult = max(self.atr_mult * 0.75, 1.5)
+        logger = __import__('logging').getLogger(__name__)
+        logger.debug("TREND_4H atr_mult=%.2f", self.atr_mult)
 
     def name(self) -> str:
         return "trend_4h"
@@ -68,7 +84,7 @@ class Trend4h(PerpStrategy):
         if last.volume * last.close < vol_min:
             return None
 
-        ema200 = self._ema(candles, self.ema_bias_period)
+        ema50 = self._ema(candles, self.ema_bias_period)
         if ema200 is None or ema200 <= 0:
             return None
 

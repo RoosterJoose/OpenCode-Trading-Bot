@@ -28,7 +28,7 @@ class PaperPerpExchange:
     - Position tracking
     """
 
-    TAKER_FEE = 0.00025
+    TAKER_FEE = 0.0006
     MAKER_FEE = 0.00015
     LIQUIDATION_BUFFER = 0.05
 

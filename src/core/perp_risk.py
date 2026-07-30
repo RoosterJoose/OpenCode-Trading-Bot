@@ -58,7 +58,7 @@ class PerpRiskManager:
         self.last_reset_date = date.today()
         self.highest_dd: float = 0.0
         self.daily_pnl: float = 0.0
-        self.max_concurrent_positions: int = 3
+        self.max_concurrent_positions: int = 5
         self._consecutive_losses: dict[str, int] = defaultdict(int)
         self._oi_history: dict[str, list[tuple[int, float]]] = defaultdict(list)
         self._trade_pnls: list[float] = []
@@ -120,7 +120,7 @@ class PerpRiskManager:
         # Portfolio-wide kill switch (NotebookLM: WR < 48% or daily loss > 3.5%)
         if len(self._recent_outcomes) >= 10:
             wr = sum(self._recent_outcomes) / len(self._recent_outcomes)
-            if wr < 0.30:
+            if wr < 0.48:
                 return False, f"portfolio_wr_halt: {wr:.0%} WR on last {len(self._recent_outcomes)} trades"
 
         return True, "ok"
@@ -221,9 +221,13 @@ class PerpRiskManager:
 
     def position_size(
         self, asset: str, equity: float, stop_distance_pct: float, price: float,
-        current_gross_exposure: float = 0.0
+        current_gross_exposure: float = 0.0,
+        kelly_fraction: float = 1.0
     ) -> tuple[float, float, float]:
-        risk_dollars = equity * (self.risk_per_trade_pct / 100)
+        if kelly_fraction != 1.0:
+            risk_dollars = equity * kelly_fraction
+        else:
+            risk_dollars = equity * (self.risk_per_trade_pct / 100)
         max_notional = risk_dollars / (stop_distance_pct / 100)
         quantity = max_notional / price if price > 0 else 0
 

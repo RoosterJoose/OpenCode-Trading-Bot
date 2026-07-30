@@ -25,6 +25,8 @@ class CrossSectionalMomentum(PerpStrategy):
         min_volume_usd: float = 0,
         cooldown_cycles: int = 60,
         profit_target_pct: float = 5.0,
+        atr_target_mult: float = 2.5,
+        atr_stop_mult: float = 1.5,
         stop_loss_pct: float = 3.0,
         majors: set | None = None,
         signal_tracker=None,
@@ -35,10 +37,13 @@ class CrossSectionalMomentum(PerpStrategy):
         self.min_volume_usd = min_volume_usd
         self.cooldown_cycles = cooldown_cycles
         self.profit_target_pct = profit_target_pct
+        self.atr_target_mult = atr_target_mult
+        self.atr_stop_mult = atr_stop_mult
         self.stop_loss_pct = stop_loss_pct
         self.majors = majors or {"BTC", "ETH"}
         self.signal_tracker = signal_tracker
         self._cooldowns: dict[str, int] = {}
+        self._last_entry_candle: dict[str, float] = {}
         self.blocked_assets: set = {"ZEC", "AAVE", "ADA"}
 
     def name(self) -> str:
@@ -60,6 +65,11 @@ class CrossSectionalMomentum(PerpStrategy):
         if self._cooldowns.get(asset, 0) > 0:
             self._cooldowns[asset] -= 1
             return None
+
+        if candles and len(candles) >= 2:
+            latest_candle_ts = candles[-1].timestamp
+            if latest_candle_ts == self._last_entry_candle.get(asset, 0):
+                return None
 
         if asset in self.blocked_assets:
             return None
@@ -102,9 +112,22 @@ class CrossSectionalMomentum(PerpStrategy):
 
         rank = top_assets.index(asset) + 1 if is_long else bottom_assets.index(asset) + 1
         rank_factor = 1.0 - (rank - 1) * 0.1
-        magnitude_factor = min(abs(ret_7d) / 0.02, 2.0)
-        confidence = 0.50 + 0.15 * rank_factor + 0.10 * min(magnitude_factor, 1.0)
-        confidence = min(max(confidence, 0.50), 0.90)
+
+        # Z-score normalized confidence
+        all_rets = [v for _, v in sorted_assets]
+        if len(all_rets) > 2:
+            mu = sum(all_rets) / len(all_rets)
+            std = (sum((r - mu) ** 2 for r in all_rets) / len(all_rets)) ** 0.5
+            if std > 0:
+                z = (ret_7d - mu) / std
+                z_confidence = 0.70 + z * 0.10
+                z_confidence = min(max(z_confidence, 0.50), 0.95)
+            else:
+                z_confidence = 0.70
+        else:
+            z_confidence = 0.70
+
+        confidence = z_confidence * 0.6 + (0.50 + 0.15 * rank_factor) * 0.4
 
         side = Side.LONG if is_long else Side.SHORT
         entry_price = last.close
@@ -121,6 +144,17 @@ class CrossSectionalMomentum(PerpStrategy):
             "sources": ["xs_momentum", f"rank_{rank}", f"ret7d_{ret_7d:.2%}"],
         }
 
+    def _compute_atr(self, candles: list, period: int = 14) -> float:
+        if not candles or len(candles) < period + 1:
+            return 0.0
+        total = 0.0
+        for i in range(-period, 0):
+            h = candles[i].high
+            lo = candles[i].low
+            pc = candles[i - 1].close
+            total += max(h - lo, abs(h - pc), abs(lo - pc))
+        return total / period
+
     def should_exit(
         self,
         asset: str,
@@ -131,14 +165,36 @@ class CrossSectionalMomentum(PerpStrategy):
     ) -> Optional[tuple[str, float]]:
         if position.entry_price <= 0:
             return None
+        if position.leverage <= 0:
+            return None
+
         pnl_pct = (current_price - position.entry_price) / position.entry_price
         if position.side == Side.SHORT:
             pnl_pct = -pnl_pct
 
-        if pnl_pct * position.leverage >= self.profit_target_pct / 100:
+        # ATR-scaled stop and target
+        atr_val = self._compute_atr(candles, period=14) if candles else 0.0
+        if atr_val > 0 and position.entry_price > 0:
+            atr_pct_of_price = (atr_val / position.entry_price) * 100
+            dynamic_target_pct = atr_pct_of_price * self.atr_target_mult
+            dynamic_target_pct = max(1.0, min(dynamic_target_pct, 15.0))
+            dynamic_stop_pct = atr_pct_of_price * self.atr_stop_mult
+            dynamic_stop_pct = max(1.0, min(dynamic_stop_pct, 8.0))
+        else:
+            fallback_atr_pct = self.profit_target_pct / max(self.atr_target_mult, 0.01)
+            dynamic_target_pct = fallback_atr_pct * self.atr_target_mult
+            dynamic_target_pct = max(1.0, min(dynamic_target_pct, 15.0))
+            dynamic_stop_pct = self.stop_loss_pct
+
+        # tp1 at 1x ATR - close 50%, trail rest
+        tp1_target_pct = dynamic_target_pct / self.atr_target_mult
+        if pnl_pct >= tp1_target_pct / 100 and not getattr(position, "tp1_scaled", False):
+            return "tp1", current_price
+
+        if pnl_pct >= dynamic_target_pct / 100:
             return "xs_profit_target", current_price
 
-        if pnl_pct * position.leverage <= -self.stop_loss_pct / 100:
+        if pnl_pct <= -dynamic_stop_pct / 100:
             self._cooldowns[asset] = self.cooldown_cycles
             return "xs_stop_loss", current_price
 

@@ -80,7 +80,7 @@ class RiskGovernor:
         max_daily_loss_pct: float = 4.0,
         max_drawdown_pct: float = 12.0,
         max_single_position_pct: float = 50.0,
-        max_concurrent_positions: int = 3,
+        max_concurrent_positions: int = 5,
     ):
         self.store = store
         self.initial_capital = initial_capital
