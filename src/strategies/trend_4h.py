@@ -85,11 +85,11 @@ class Trend4h(PerpStrategy):
             return None
 
         ema50 = self._ema(candles, self.ema_bias_period)
-        if ema200 is None or ema200 <= 0:
+        if ema50 is None or ema50 <= 0:
             return None
 
-        above_ema = last.close > ema200
-        below_ema = last.close < ema200
+        above_ema = last.close > ema50
+        below_ema = last.close < ema50
 
         recent = candles[-(self.breakout_period + 1):-1]
         if len(recent) < self.breakout_period:
@@ -101,8 +101,8 @@ class Trend4h(PerpStrategy):
         is_short = last.close < lower and below_ema
 
         if not (is_long or is_short):
-            logger.info("TREND_4H %s: no breakout close=%.2f upper=%.2f lower=%.2f ema200=%.2f",
-                        asset, last.close, upper, lower, ema200)
+            logger.info("TREND_4H %s: no breakout close=%.2f upper=%.2f lower=%.2f ema50=%.2f",
+                        asset, last.close, upper, lower, ema50)
             return None
 
         if is_long:
@@ -126,7 +126,7 @@ class Trend4h(PerpStrategy):
             "donchian_upper": round(upper, 2),
             "donchian_lower": round(lower, 2),
             "breakout_pct": round(breakout_pct * 100, 3),
-            "ema200": round(ema200, 2),
+            "ema50": round(ema50, 2),
             "side": side.value,
             "sources": ["trend_4h_donchian", f"breakout_{breakout_pct:.3f}"],
         }
