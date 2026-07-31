@@ -348,6 +348,7 @@ class ExecutionEngine:
                 entry_time=datetime.now(timezone.utc),
                 stop_loss=record.stop_price,
                 component_sources=list(record.metadata.get("component_sources", [])),
+                entry_maker=record.maker_fill,
             )
             self.positions[asset] = pos
 
@@ -414,8 +415,10 @@ class ExecutionEngine:
         else:
             pnl_dollars = (pos.entry_price - exit_price) * close_qty
 
-        # Fees (entry + exit)
-        entry_fee = close_qty * pos.entry_price * self.taker_fee  # entry was market (taker)
+        # Fees (entry + exit). Entry fee uses the rate actually charged at open
+        # (maker for limit entries like fade_5m, taker for market entries).
+        entry_fee_rate = self.maker_fee if getattr(pos, "entry_maker", False) else self.taker_fee
+        entry_fee = close_qty * pos.entry_price * entry_fee_rate
         exit_fee = close_qty * exit_price * self.taker_fee
         total_fees = entry_fee + exit_fee
 
@@ -427,17 +430,25 @@ class ExecutionEngine:
         # Net PnL
         net_pnl = pnl_dollars - total_fees - funding
 
-        # R-multiple (side-aware)
-        stop_distance = abs(pos.entry_price - (pos.stop_loss or pos.entry_price * 0.97))
-        r_multiple = (pnl_dollars / (stop_distance * close_qty)) if stop_distance > 0 else 0.0
-        if pos.side == Side.SHORT:
-            r_multiple = r_multiple  # already correct from PnL formula above
+        # R-multiple (honest): net PnL numerator, ACTUAL strategy stop denominator.
+        # pos.risk_stop_pct (% of entry) is the stop that truly fires in the
+        # strategy's should_exit — NOT the swing anchor used for sizing.
+        # Falls back to the swing stop distance for legacy positions.
+        if getattr(pos, "risk_stop_pct", 0.0) > 0:
+            risk_per_qty = pos.entry_price * (pos.risk_stop_pct / 100.0)
+        else:
+            risk_per_qty = abs(pos.entry_price - (pos.stop_loss or pos.entry_price * 0.97))
+        r_multiple = (net_pnl / (risk_per_qty * close_qty)) if risk_per_qty > 0 else 0.0
 
         # PnL percentage
         pnl_pct = (pnl_dollars / (pos.entry_price * close_qty)) * 100 if pos.entry_price > 0 else 0.0
 
-        # Update balance
-        self.balance += net_pnl
+        # Update balance.
+        # net_pnl already subtracts entry_fee + exit_fee + funding, but the entry
+        # fee was ALREADY deducted from balance at open (_apply_fill). Add it back
+        # so balance reflects one fee charge per leg. TradeRecord.pnl_dollars stays
+        # net_pnl (correct for reporting and the honest R numerator).
+        self.balance += net_pnl + entry_fee
         self._total_fees_paid += exit_fee
 
         # Generate trade record
@@ -593,6 +604,12 @@ class ExecutionEngine:
                     signal_source=raw.get("signal_source", ""),
                     entry_confidence=float(raw.get("entry_confidence", 0)),
                     component_sources=list(raw.get("component_sources", [])),
+                    risk_stop_pct=float(raw.get("risk_stop_pct", 0)),
+                    tp1_scaled=bool(raw.get("tp1_scaled", False)),
+                    mae_pct=float(raw.get("mae_pct", 0)),
+                    mfe_pct=float(raw.get("mfe_pct", 0)),
+                    peak_upnl=float(raw.get("peak_upnl", 0)),
+                    entry_maker=bool(raw.get("entry_maker", False)),
                 )
                 if pos.asset and pos.entry_price > 0 and pos.size > 0:
                     if not pos.strategy or (pos.stop_loss is None and pos.take_profit is None):

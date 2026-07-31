@@ -25,6 +25,7 @@ class Fade5m(PerpStrategy):
         "stop_atr_mult": {"min": 0.5, "max": 3.0},
         "target_atr_mult": {"min": 1.0, "max": 5.0},
         "cooldown_cycles": {"min": 5, "max": 100},
+        "min_stop_pct": {"min": 0.5, "max": 3.0},
     }
     def __init__(
         self,
@@ -38,6 +39,7 @@ class Fade5m(PerpStrategy):
         target_atr_mult: float = 2.0,
         min_volume_usd: float = 100_000,
         cooldown_cycles: int = 12,
+        min_stop_pct: float = 0.6,
         majors: set | None = None,
         signal_tracker=None,
     ):
@@ -51,6 +53,7 @@ class Fade5m(PerpStrategy):
         self.target_atr_mult = target_atr_mult
         self.min_volume_usd = min_volume_usd
         self.cooldown_cycles = cooldown_cycles
+        self.min_stop_pct = min_stop_pct
         self.majors = majors or {"BTC", "ETH"}
         self.signal_tracker = signal_tracker
         self._cooldowns: dict[str, int] = {}
@@ -88,6 +91,19 @@ class Fade5m(PerpStrategy):
             h, l, pc = candles[i].high, candles[i].low, candles[i - 1].close
             trs.append(max(h - l, abs(h - pc), abs(l - pc)))
         return sum(trs) / len(trs) if trs else 0.0
+
+    def risk_stop_pct(
+        self,
+        asset: str,
+        entry_price: float,
+        candles: list[PerpCandle],
+    ) -> float:
+        """Actual stop that fires (1.0x 5m-ATR, unclamped). Mirrors should_exit
+        so R-multiple is measured against true risk."""
+        atr = self._atr(candles)
+        if atr <= 0 or entry_price <= 0:
+            return 0.5
+        return (atr * self.stop_atr_mult / entry_price) * 100
 
     def should_enter(
         self,
@@ -132,6 +148,17 @@ class Fade5m(PerpStrategy):
             return None
 
         entry_price = last.close
+
+        # Fee-to-risk gate: 5m ATR stops are naturally tight (0.05-0.3%). Round-trip
+        # fees (0.12%) on a 0.3% stop consume 40% of risk — a structural fee burn.
+        # Reject entries whose stop is so narrow that fees dominate the trade. At
+        # min_stop_pct=0.6% fees are <= 20% of risk; only high-vol 5m setups pass.
+        if entry_price > 0:
+            raw_stop_pct = (atr * self.stop_atr_mult / entry_price) * 100
+            if raw_stop_pct < self.min_stop_pct:
+                logger.debug("FADE5M %s: skip -- stop %.2f%% < min %.1f%% (fee-to-risk gate)",
+                             asset, raw_stop_pct, self.min_stop_pct)
+                return None
 
         # Confidence scales with deviation strength
         z_min = self.z_min_major if is_major else self.z_min_alt

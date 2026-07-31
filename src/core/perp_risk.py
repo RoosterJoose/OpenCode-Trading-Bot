@@ -231,13 +231,15 @@ class PerpRiskManager:
         # BTC correlation penalty: Size *= (1 - |ρ_btc|)
         corr = self.btc_correlation(asset)
         if corr is not None:
-            quantity *= max(0.5, 1.0 - abs(corr))
+            quantity *= max(0.7, 1.0 - abs(corr))
 
         # Linear streak modifier over last 10 trades
+        # Floor raised 0.5 -> 0.8 so the streak shrinker can't compound with the
+        # correlation penalty to crush risk-based sizing below fee-efficient notional.
         if self._recent_outcomes:
             recent = self._recent_outcomes[-10:]
             wins = sum(recent)
-            phi = max(0.5, min(1.5, 1.0 + (wins - (len(recent) - wins)) / 10.0))
+            phi = max(0.8, min(1.5, 1.0 + (wins - (len(recent) - wins)) / 10.0))
             quantity *= phi
 
         port_notional = max(current_gross_exposure, self.gross_exposure())

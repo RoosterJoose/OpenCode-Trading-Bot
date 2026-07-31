@@ -80,3 +80,18 @@ class PerpStrategy(ABC):
         candles: list[PerpCandle],
         funding_rate: float,
     ) -> Optional[tuple[str, Optional[float]]]: ...
+
+    def risk_stop_pct(
+        self,
+        asset: str,
+        entry_price: float,
+        candles: list[PerpCandle],
+    ) -> float:
+        """Return the strategy's ACTUAL exit stop as a percentage of entry price.
+
+        This is the stop that truly fires in should_exit, NOT the swing anchor
+        used for sizing. R-multiple must be measured against this number so that
+        Fractional Kelly / IC allocation see honest risk units. Defaults to 1.0%
+        (the generic strategy floor) when a strategy does not override it.
+        """
+        return 1.0

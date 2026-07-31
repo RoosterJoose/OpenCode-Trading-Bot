@@ -141,6 +141,8 @@ class TradingLoop:
             self.regime = RegimeDetector()
             self.notifier = self.telegram
         self._sent_alerts: dict[str, float] = {}  # rate-limit alerts (key -> timestamp)
+        self._btc_knife_latch_until: float = 0.0  # knife guard stays latched this long (epoch ts)
+        self._knife_long_cooldown_until: dict[str, float] = {}  # asset -> no-long-entry until
 
     def _restore_paper_positions(self, exchange: ExecutionEngine):
         positions = self.store.get_state("positions") or []
@@ -759,6 +761,7 @@ class TradingLoop:
 
         # 5a. BTC falling-knife guard + bear-market flag (once per cycle)
         btc_candles = self.candle_cache.get("BTC", [])
+        now_ts = datetime.now(timezone.utc).timestamp()
         self._btc_knife_block = False
         self._btc_bear_market = False
         if len(btc_candles) >= 60:
@@ -769,11 +772,21 @@ class TradingLoop:
             self._btc_bear_market = btc_price < btc_ema50
             if btc_adx > 28 and btc_price < btc_ema50:
                 self._btc_knife_block = True
-                logger.info("BTC knife guard: ADX=%.1f price=%.0f < EMA50=%.0f",
+                # Latch for 2h so one quiet cycle can't release the guard (flicker
+                # protection) — the guard re-arms automatically when conditions hold.
+                self._btc_knife_latch_until = now_ts + 7200
+                logger.info("BTC knife guard: ADX=%.1f price=%.0f < EMA50=%.0f (latched 2h)",
                              btc_adx, btc_price, btc_ema50)
+            elif now_ts < self._btc_knife_latch_until:
+                # Latch is unconditional while within the window — survives a price
+                # recovery above EMA50 so a one-bar bounce can't release the guard
+                # and allow a re-entry that the knife would then immediately close.
+                self._btc_knife_block = True
+                logger.info("BTC knife guard: latched (%.0f min remaining)",
+                             (self._btc_knife_latch_until - now_ts) / 60)
             elif self._btc_bear_market:
                 logger.info("BTC bear market: price=%.0f < EMA50=%.0f (longs blocked)",
-                             btc_price, btc_ema50)
+                            btc_price, btc_ema50)
 
         # 5. Process each asset
         for asset in self.assets:
@@ -907,6 +920,12 @@ class TradingLoop:
                 "component_sources": p.component_sources,
                 "regime": getattr(p, "regime", ""),
                 "entry_regime": getattr(p, "entry_regime", ""),
+                "risk_stop_pct": getattr(p, "risk_stop_pct", 0.0),
+                "tp1_scaled": getattr(p, "tp1_scaled", False),
+                "mae_pct": getattr(p, "mae_pct", 0.0),
+                "mfe_pct": getattr(p, "mfe_pct", 0.0),
+                "peak_upnl": getattr(p, "peak_upnl", 0.0),
+                "entry_maker": getattr(p, "entry_maker", False),
             }
             for p in exchange.positions.values()
         ])
@@ -1043,6 +1062,18 @@ class TradingLoop:
         # Filter trades with exit_time >= epoch when _kelly_reset_version was last incremented
         if self._kelly_reset_version >= 3:
             strat_trades = [t for t in strat_trades if t.get("exit_time", "") >= "2026-07-30"]
+        # Dedupe tp1 partial closes: one trade may produce multiple records (tp1 50% +
+        # final 50%). Aggregate R per unique entry (entry_time+entry_price) so the n<20
+        # gate and win-rate aren't inflated by scale-out bookkeeping.
+        grouped: dict[tuple, dict] = {}
+        for t in strat_trades:
+            key = (t.get("entry_time", ""), t.get("entry_price", 0))
+            if key not in grouped:
+                grouped[key] = {"r": 0.0, "n": 0}
+            grouped[key]["r"] += t.get("r_multiple", 0)
+            grouped[key]["n"] += 1
+        agg = [{"r_multiple": g["r"] / g["n"]} for g in grouped.values()]
+        strat_trades = agg
         if len(strat_trades) < 20:
             return 0.25  # lower risk while building trade history
         wins = [abs(t.get("r_multiple", 0)) for t in strat_trades if t.get("r_multiple", 0) > 0]
@@ -1051,7 +1082,7 @@ class TradingLoop:
         avg_r_win = sum(wins) / len(wins) if wins else 0.5
         avg_r_loss = sum(losses) / len(losses) if losses else 1.0
         if avg_r_win <= 0 or avg_r_loss <= 0:
-            return 1.0
+            return 0.25  # degenerate edge: never bet full risk
         kelly = wr - (1 - wr) / (avg_r_win / avg_r_loss)
         if kelly <= 0:
             return 0.0
@@ -1066,6 +1097,7 @@ class TradingLoop:
         exchange: ExecutionEngine,
     ):
         self._last_entry_diag_cycle = self._cycle_count
+        now_ts = time.time()
         # Self-heal: candle freshness + quality check
         if candles:
             try:
@@ -1133,7 +1165,15 @@ class TradingLoop:
                 for strat in self.strategies:
                     if strat.name() != pos.strategy:
                         continue
-                    result = strat.should_exit(asset, pos, price, candles, funding_rate)
+                    # Route strategy-appropriate candles (same as entry path) so
+                    # fade_5m computes its stop on 5m bars and trend_4h on 4h bars.
+                    if strat.name() == "trend_4h":
+                        exit_candles = self.candle_4h_cache.get(asset, candles)
+                    elif strat.name() == "fade_5m":
+                        exit_candles = self.candle_5m_cache.get(asset, candles)
+                    else:
+                        exit_candles = candles
+                    result = strat.should_exit(asset, pos, price, exit_candles, funding_rate)
                     if result:
                         reason, limit = result
                         close_pct = 0.5 if reason == "tp1" else 1.0
@@ -1142,21 +1182,21 @@ class TradingLoop:
                             return
                         pos.tp1_scaled = True
 
-                # BTC knife-guard time-stop: close longs held >60min during confirmed downtrend
+                # BTC knife-guard: close longs IMMEDIATELY during confirmed downtrend.
+                # The latch prevents flicker whiplash, and a 6h cooldown on that asset
+                # prevents re-entering the same falling knife. Cooldown set BEFORE the
+                # close so an exception in _close cannot skip the risk control.
                 if self._btc_knife_block and pos.side == Side.LONG:
-                    age = datetime.now(timezone.utc) - pos.entry_time
-                    if age.total_seconds() > 3600:
-                        logger.warning("KNIFE_TIMESTOP %s: long held %.0f min >60 min during BTC knife guard -- closing",
-                                       asset, age.total_seconds() / 60)
-                        await self._close(asset, pos, price, "knife_guard_time_exit", exchange)
-                        return
+                    logger.warning("KNIFE_CLOSE %s: long closed immediately during BTC knife guard -- closing",
+                                   asset)
+                    self._knife_long_cooldown_until[asset] = now_ts + 21600  # 6h
+                    await self._close(asset, pos, price, "knife_guard_time_exit", exchange)
+                    return
 
                 # Portfolio health sweep: close positions past their edge
                 if getattr(pos, "entry_time", None):
                     age_min = (datetime.now(timezone.utc) - pos.entry_time).total_seconds() / 60
                     upnl = float(getattr(pos, "unrealized_pnl", 0) or 0)
-                    peak = float(getattr(pos, "peak_upnl", 0) or 0)
-
                     # Resolve position strategy for SMA200 exemption
                     strategy = getattr(pos, 'strategy', '') or getattr(pos, 'signal_source', '')
                     # Skip max_age for TP1-scaled positions (chandelier manages) and SMA200 macro positions
@@ -1172,14 +1212,24 @@ class TradingLoop:
                     # B. Peak decay: profitable position decayed >N%% from peak (strategy-specific)
                     # Research: momentum (XS/Trend) = 75%% retracement, mean-rev = 50%%
                     # Skip peak decay for macro SMA200 positions — they need days/weeks to develop
-                    if strategy != 'sma200_perp' and peak > 3:
+                    # Percent-based (mfe_pct) instead of dollar-based (peak_upnl) so sizing
+                    # changes don't distort decay. Net-positive floor: never decay below
+                    # ~0.30% gross profit (below round-trip taker friction 0.12% + spread)
+                    # — otherwise we exit into pure fee burn.
+                    if strategy != 'sma200_perp':
                         _decay_threshold = 75 if strategy in ("xs_momentum", "trend_4h") else 50
-                        decay_pct = (peak - upnl) / peak * 100
-                        if upnl > 0 and decay_pct > _decay_threshold:
-                            logger.info("PORTFOLIO_SWEEP %s: upnl=$%.1f peak=$%.1f decay=%.0f%% > %d%% -- closing",
-                                        asset, upnl, peak, decay_pct, _decay_threshold)
-                            await self._close(asset, pos, price, "portfolio_peak_decay", exchange)
-                            return
+                        mfe_val = float(getattr(pos, 'mfe_pct', 0) or 0)
+                        # Require a meaningful excursion before decay can arm
+                        if mfe_val >= 0.5:
+                            upnl_pct = upnl / (pos.entry_price * abs(pos.size)) * 100 if pos.entry_price > 0 else 0
+                            # Require a net-positive position AND still above the fee floor
+                            if upnl_pct >= 0.30:
+                                decay_pct = (mfe_val - upnl_pct) / mfe_val * 100
+                                if decay_pct > _decay_threshold:
+                                    logger.info("PORTFOLIO_SWEEP %s: upnl_pct=%.2f%% mfe=%.2f%% decay=%.0f%% > %d%% -- closing",
+                                                asset, upnl_pct, mfe_val, decay_pct, _decay_threshold)
+                                    await self._close(asset, pos, price, "portfolio_peak_decay", exchange)
+                                    return
 
                     # SMA200 crossover exit: close SMA200 positions when signal reverses
                     if strategy == 'sma200_perp':
@@ -1221,8 +1271,9 @@ class TradingLoop:
                                             asset, age_min/60, dist_pct, max_age_min/60)
                                 await self._close(asset, pos, price, "sma200_time_exit", exchange)
                                 return
-                    # C. Stale: open >60min with zero or negative PnL (non-SMA200 only)
-                    elif age_min > 720 and upnl <= 0:  # stale exit removed
+                    # C. Stale: open >12h with zero or negative PnL (non-SMA200 only).
+                    # Skip tp1-scaled positions — their remainder is chandelier-managed.
+                    elif age_min > 720 and upnl <= 0 and not getattr(pos, 'tp1_scaled', False):
                         logger.info("PORTFOLIO_SWEEP %s: stale %.0f min upnl=$%.1f -- closing", asset, age_min, upnl)
                         await self._close(asset, pos, price, "portfolio_stale", exchange)
                         return
@@ -1359,8 +1410,16 @@ class TradingLoop:
                 logger.debug("%s %s: skip -- OI (conf=%.2f < 0.60)", strat.name(), asset, confidence)
                 continue
             # Absolute floor for non-MR strategies (trend/need >= 0.70 regardless of global MIN)
-            if self._btc_bear_market and side == Side.LONG:
-                logger.info("ENTRY_DIAG %s %s: skip -- BTC bear market (longs blocked)", strat.name(), asset)
+            if (self._btc_knife_block or self._btc_bear_market) and side == Side.LONG:
+                logger.info("ENTRY_DIAG %s %s: skip -- BTC knife/bear market (longs blocked)", strat.name(), asset)
+                continue
+
+            # Post-knife long cooldown: no long re-entry on this asset for 6h after
+            # the knife guard force-closed it (don't re-catch the same falling knife)
+            if side == Side.LONG and self._knife_long_cooldown_until.get(asset, 0.0) > now_ts:
+                logger.info("ENTRY_DIAG %s %s: skip -- post-knife long cooldown (%.0f min left)",
+                            strat.name(), asset,
+                            (self._knife_long_cooldown_until[asset] - now_ts) / 60)
                 continue
 
             # Leverage + stop sizing
@@ -1373,8 +1432,16 @@ class TradingLoop:
             entry_price = price
             strat_name = strat.name()
             kelly = self._kelly_factor_for_strategy(strat_name)
+            # Size against the strategy's ACTUAL exit stop (the one R is measured
+            # against), not the swing anchor — otherwise notional is under-deployed
+            # and fee drag dominates. Fall back to compute_stop_distance.
+            try:
+                risk_stop_pct = strat.risk_stop_pct(asset, entry_price, strat_candles)
+            except Exception:
+                risk_stop_pct = 0.0
+            sizing_stop_pct = risk_stop_pct if risk_stop_pct > 0 else stop_pct
             qty, risk_dollars, max_notional = self.risk.position_size(
-                asset, exchange.equity, stop_pct, entry_price, exchange.gross_exposure,
+                asset, exchange.equity, sizing_stop_pct, entry_price, exchange.gross_exposure,
                 kelly_fraction=kelly
             )
 
@@ -1487,6 +1554,12 @@ class TradingLoop:
                     pos.signal_source = f"{strat.name()}:{asset}"
                     pos.entry_confidence = confidence
                     pos.stop_loss = stop_price
+                    # Actual strategy stop used for honest R-multiple measurement
+                    try:
+                        risk_stop = strat.risk_stop_pct(asset, entry_price, strat_candles)
+                    except Exception:
+                        risk_stop = risk_stop_pct if risk_stop_pct > 0 else 1.0
+                    pos.risk_stop_pct = risk_stop
                     pos.component_sources = list(meta.get("component_sources", []))
                     pos.regime = regime.value if hasattr(regime, "value") else str(regime)
                     pos.entry_regime = pos.regime

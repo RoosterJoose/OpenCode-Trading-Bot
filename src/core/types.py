@@ -95,6 +95,16 @@ class PerpPosition:
     entry_funding_rate: float = 0.0
     component_sources: list[str] = field(default_factory=list)
     fills: list[Fill] = field(default_factory=list)
+    # Strategy's actual exit stop (% of entry) — used for honest R-multiple.
+    # Distinct from stop_loss (the swing anchor used for sizing).
+    risk_stop_pct: float = 0.0
+    # Scale-out + excursion tracking (persisted across restart so tp1 isn't
+    # re-fired and peak decay/R denominators survive self-heal restarts).
+    tp1_scaled: bool = False
+    mae_pct: float = 0.0
+    mfe_pct: float = 0.0
+    peak_upnl: float = 0.0
+    entry_maker: bool = False
 
     @property
     def notional(self) -> float:

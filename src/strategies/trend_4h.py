@@ -193,3 +193,20 @@ class Trend4h(PerpStrategy):
             h, l, pc = candles[i].high, candles[i].low, candles[i - 1].close
             trs.append(max(h - l, abs(h - pc), abs(l - pc)))
         return sum(trs) / len(trs) if trs else 0.0
+
+    def risk_stop_pct(
+        self,
+        asset: str,
+        entry_price: float,
+        candles: list[PerpCandle],
+    ) -> float:
+        """Actual stop that fires (chandelier ATR trail), clamped [1.5%, 8%].
+        Mirrors should_exit so R-multiple is measured against true risk."""
+        atr = self._atr(candles)
+        if atr <= 0 or entry_price <= 0:
+            return 3.0
+        stop_dist = atr * self.atr_mult
+        min_dist = 0.015 * entry_price
+        max_dist = 0.08 * entry_price
+        stop_dist = max(min_dist, min(max_dist, stop_dist))
+        return (stop_dist / entry_price) * 100

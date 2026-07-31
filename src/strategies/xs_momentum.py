@@ -28,6 +28,7 @@ class CrossSectionalMomentum(PerpStrategy):
         atr_target_mult: float = 2.5,
         atr_stop_mult: float = 1.5,
         stop_loss_pct: float = 3.0,
+        min_stop_pct: float = 2.4,
         majors: set | None = None,
         signal_tracker=None,
     ):
@@ -40,6 +41,7 @@ class CrossSectionalMomentum(PerpStrategy):
         self.atr_target_mult = atr_target_mult
         self.atr_stop_mult = atr_stop_mult
         self.stop_loss_pct = stop_loss_pct
+        self.min_stop_pct = min_stop_pct
         self.majors = majors or {"BTC", "ETH"}
         self.signal_tracker = signal_tracker
         self._cooldowns: dict[str, int] = {}
@@ -105,6 +107,19 @@ class CrossSectionalMomentum(PerpStrategy):
         if is_short_pick and ret_7d > -0.01:
             return None
 
+        # Fee-to-risk entry gate: reject entries where round-trip taker fees
+        # (0.12%) exceed 5% of the stop distance. Min stop width = 0.12%/0.05 =
+        # 2.4%. This prevents taking fragile trades whose edge relies on
+        # execution perfection — low-vol assets with tight stops burn fees.
+        atr_val = self._compute_atr(candles, period=14)
+        if atr_val > 0 and last.close > 0:
+            atr_pct_of_price = (atr_val / last.close) * 100
+            raw_stop_pct = atr_pct_of_price * self.atr_stop_mult
+            if raw_stop_pct < self.min_stop_pct:
+                logger.debug("XS_MOMENTUM %s: skip -- stop %.2f%% < min %.1f%% (fee-to-risk gate)",
+                             asset, raw_stop_pct, self.min_stop_pct)
+                return None
+
         logger.info("XS_MOMENTUM %s: side=%s ret_7d=%.2f%%",
                     asset, "LONG" if is_long_pick else "SHORT", ret_7d * 100)
 
@@ -155,6 +170,22 @@ class CrossSectionalMomentum(PerpStrategy):
             total += max(h - lo, abs(h - pc), abs(lo - pc))
         return total / period
 
+    def risk_stop_pct(
+        self,
+        asset: str,
+        entry_price: float,
+        candles: list[PerpCandle],
+    ) -> float:
+        """Actual stop that fires in should_exit (xs_stop_loss), NOT the swing
+        anchor used at sizing time. Mirrors the dynamic stop logic exactly so
+        R-multiple is measured against the true risk-at-stake."""
+        atr_val = self._compute_atr(candles, period=14) if candles else 0.0
+        if atr_val > 0 and entry_price > 0:
+            atr_pct_of_price = (atr_val / entry_price) * 100
+            stop_pct = atr_pct_of_price * self.atr_stop_mult
+            return max(self.min_stop_pct, min(stop_pct, 8.0))
+        return max(self.stop_loss_pct, self.min_stop_pct)
+
     def should_exit(
         self,
         asset: str,
@@ -172,18 +203,23 @@ class CrossSectionalMomentum(PerpStrategy):
         if position.side == Side.SHORT:
             pnl_pct = -pnl_pct
 
-        # ATR-scaled stop and target
+        # ATR-scaled stop and target.
+        # Fee-to-risk floors: round-trip taker fees (0.12%) must stay <= 5% of
+        # stop distance, so the stop floor is 2.4%. The target floor scales
+        # proportionally (2.5/1.5 ratio) to preserve ~1.67 R:R when vol contracts.
         atr_val = self._compute_atr(candles, period=14) if candles else 0.0
         if atr_val > 0 and position.entry_price > 0:
             atr_pct_of_price = (atr_val / position.entry_price) * 100
             dynamic_target_pct = atr_pct_of_price * self.atr_target_mult
-            dynamic_target_pct = max(1.0, min(dynamic_target_pct, 15.0))
+            dynamic_target_pct = max(self.min_stop_pct * self.atr_target_mult / self.atr_stop_mult,
+                                     min(dynamic_target_pct, 15.0))
             dynamic_stop_pct = atr_pct_of_price * self.atr_stop_mult
-            dynamic_stop_pct = max(1.0, min(dynamic_stop_pct, 8.0))
+            dynamic_stop_pct = max(self.min_stop_pct, min(dynamic_stop_pct, 8.0))
         else:
             fallback_atr_pct = self.profit_target_pct / max(self.atr_target_mult, 0.01)
             dynamic_target_pct = fallback_atr_pct * self.atr_target_mult
-            dynamic_target_pct = max(1.0, min(dynamic_target_pct, 15.0))
+            dynamic_target_pct = max(self.min_stop_pct * self.atr_target_mult / self.atr_stop_mult,
+                                     min(dynamic_target_pct, 15.0))
             dynamic_stop_pct = self.stop_loss_pct
 
         # tp1 at 1x ATR - close 50%, trail rest
