@@ -757,18 +757,23 @@ class TradingLoop:
         except Exception as e:
             logger.debug("xs returns: %s", e)
 
-        # 5a. BTC falling-knife guard (once per cycle)
+        # 5a. BTC falling-knife guard + bear-market flag (once per cycle)
         btc_candles = self.candle_cache.get("BTC", [])
         self._btc_knife_block = False
+        self._btc_bear_market = False
         if len(btc_candles) >= 60:
             btc_adx = TradingLoop._adx(btc_candles)
             btc_closes = [c.close for c in btc_candles]
             btc_ema50 = TradingLoop._ema(btc_closes, 50)
             btc_price = btc_closes[-1]
+            self._btc_bear_market = btc_price < btc_ema50
             if btc_adx > 28 and btc_price < btc_ema50:
                 self._btc_knife_block = True
                 logger.info("BTC knife guard: ADX=%.1f price=%.0f < EMA50=%.0f",
                              btc_adx, btc_price, btc_ema50)
+            elif self._btc_bear_market:
+                logger.info("BTC bear market: price=%.0f < EMA50=%.0f (longs blocked)",
+                             btc_price, btc_ema50)
 
         # 5. Process each asset
         for asset in self.assets:
@@ -1354,9 +1359,8 @@ class TradingLoop:
                 logger.debug("%s %s: skip -- OI (conf=%.2f < 0.60)", strat.name(), asset, confidence)
                 continue
             # Absolute floor for non-MR strategies (trend/need >= 0.70 regardless of global MIN)
-            if self._btc_knife_block and side == Side.LONG:
-                logger.debug("%s %s: blocked by BTC falling-knife guard (longs blocked)",
-                             strat.name(), asset)
+            if self._btc_bear_market and side == Side.LONG:
+                logger.info("ENTRY_DIAG %s %s: skip -- BTC bear market (longs blocked)", strat.name(), asset)
                 continue
 
             # Leverage + stop sizing
