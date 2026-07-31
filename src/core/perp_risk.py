@@ -224,10 +224,7 @@ class PerpRiskManager:
         current_gross_exposure: float = 0.0,
         kelly_fraction: float = 1.0
     ) -> tuple[float, float, float]:
-        if kelly_fraction != 1.0:
-            risk_dollars = equity * kelly_fraction
-        else:
-            risk_dollars = equity * (self.risk_per_trade_pct / 100)
+        risk_dollars = equity * (self.risk_per_trade_pct / 100) * kelly_fraction
         max_notional = risk_dollars / (stop_distance_pct / 100)
         quantity = max_notional / price if price > 0 else 0
 

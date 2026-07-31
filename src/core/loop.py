@@ -1029,9 +1029,15 @@ class TradingLoop:
         except Exception:
             return 0.0
 
+    _kelly_reset_version = 3  # class-level: increment to reset Kelly after major strategy changes
+
     def _kelly_factor_for_strategy(self, strategy: str) -> float:
         trades = self.store.trades(limit=200)
         strat_trades = [t for t in trades if t.get("strategy") == strategy and t.get("r_multiple", 0) != 0]
+        # Kelly reset: only count trades from current strategy version (after last code overhaul)
+        # Filter trades with exit_time >= epoch when _kelly_reset_version was last incremented
+        if self._kelly_reset_version >= 3:
+            strat_trades = [t for t in strat_trades if t.get("exit_time", "") >= "2026-07-30"]
         if len(strat_trades) < 20:
             return 0.25  # lower risk while building trade history
         wins = [abs(t.get("r_multiple", 0)) for t in strat_trades if t.get("r_multiple", 0) > 0]
@@ -1444,6 +1450,9 @@ class TradingLoop:
             # RiskGovernor: account-level entry check before committing
             notional = qty * entry_price
             current_positions = len(getattr(exchange, '_active_positions', {}))
+            logger.info("GOV_CHECK %s: notional=$%.0f equity=$%.0f gross=$%.0f pos=%d kelly=%.2f stop=%.1f%% qty=%.4f",
+                        asset, notional, exchange.equity, exchange.gross_exposure, current_positions,
+                        kelly, stop_pct, qty)
             gov_ok, gov_msg = self.governor.check_entry(
                 asset=asset,
                 notional=notional,
