@@ -269,7 +269,7 @@ class TradingLoop:
         key1 = self.config.get("altfins", {}).get("api_key", "") or os.environ.get("ALTFINS_API_KEY", "")
         if key1:
             altfins_keys.append(key1)
-        key2 = os.environ.get("ALTFINS_API_KEY_2", "")
+        key2 = self.config.get("altfins", {}).get("api_key_2", "") or os.environ.get("ALTFINS_API_KEY_2", "")
         if key2:
             altfins_keys.append(key2)
         if altfins_keys:
