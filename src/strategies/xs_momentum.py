@@ -66,29 +66,38 @@ class CrossSectionalMomentum(PerpStrategy):
     ) -> Optional[tuple[Side, float, dict]]:
         if self._cooldowns.get(asset, 0) > 0:
             self._cooldowns[asset] -= 1
+            logger.debug("XS_DIAG %s: cooldown %d", asset, self._cooldowns[asset])
             return None
 
         if candles and len(candles) >= 2:
             latest_candle_ts = candles[-1].timestamp
             if latest_candle_ts == self._last_entry_candle.get(asset, 0):
+                logger.debug("XS_DIAG %s: candle dedup", asset)
                 return None
 
         if asset in self.blocked_assets:
+            logger.info("XS_DIAG %s: skip -- blocked_asset", asset)
             return None
 
         if position is not None:
+            logger.debug("XS_DIAG %s: position open", asset)
             return None
 
         if len(candles) < self.lookback_candles + 5:
+            logger.info("XS_DIAG %s: skip -- candles=%d < %d",
+                        asset, len(candles), self.lookback_candles + 5)
             return None
 
         last = candles[-1]
         vol_min = self._get_threshold(asset, "volume_min_usd", self.min_volume_usd)
         if last.volume * last.close < vol_min:
+            logger.debug("XS_DIAG %s: vol gate $%.0f < $%.0f",
+                         asset, last.volume * last.close, vol_min)
             return None
 
         ret_7d = self._asset_returns_7d.get(asset, 0.0)
         if not self._asset_returns_7d:
+            logger.info("XS_DIAG %s: skip -- no asset_returns_7d populated", asset)
             return None
 
         sorted_assets = sorted(
@@ -100,11 +109,17 @@ class CrossSectionalMomentum(PerpStrategy):
         is_long_pick = asset in top_assets
         is_short_pick = asset in bottom_assets
         if not (is_long_pick or is_short_pick):
+            logger.info("XS_DIAG %s: skip -- not in top/bottom (ret_7d=%.1f%%, top=%s bottom=%s)",
+                        asset, ret_7d * 100, top_assets, bottom_assets)
             return None
 
         if is_long_pick and ret_7d < -0.03:
+            logger.info("XS_DIAG %s: skip -- long pick but ret_7d=%.1f%% < -3%%",
+                        asset, ret_7d * 100)
             return None
         if is_short_pick and ret_7d > -0.01:
+            logger.info("XS_DIAG %s: skip -- short pick but ret_7d=%.1f%% > -1%%",
+                        asset, ret_7d * 100)
             return None
 
         # Fee-to-risk entry gate: reject entries where round-trip taker fees
