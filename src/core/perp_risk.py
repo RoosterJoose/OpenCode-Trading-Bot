@@ -236,10 +236,12 @@ class PerpRiskManager:
         # Linear streak modifier over last 10 trades
         # Floor raised 0.5 -> 0.8 so the streak shrinker can't compound with the
         # correlation penalty to crush risk-based sizing below fee-efficient notional.
+        # Ceiling capped at 1.0: the Kelly ratchet (phi) is the ONLY up-multiplier.
+        # A 10-win streak must never scale size above the ratchet-approved budget.
         if self._recent_outcomes:
             recent = self._recent_outcomes[-10:]
             wins = sum(recent)
-            phi = max(0.8, min(1.5, 1.0 + (wins - (len(recent) - wins)) / 10.0))
+            phi = max(0.8, min(1.0, 1.0 + (wins - (len(recent) - wins)) / 10.0))
             quantity *= phi
 
         port_notional = max(current_gross_exposure, self.gross_exposure())

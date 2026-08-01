@@ -55,6 +55,7 @@ async def main():
     if should_pause and not cpaused:
         try:
             c = sqlite3.connect("/opt/hermes-trading-bot/data/hermes.db")
+            c.execute("INSERT OR REPLACE INTO state (key, value) VALUES ('watchdog_pause', ?)", ('"true"',))
             c.execute("INSERT OR REPLACE INTO state (key, value) VALUES ('bot_paused', ?)", ('"true"',))
             c.execute("INSERT OR REPLACE INTO state (key, value) VALUES ('pause_reasons', ?)", ('["auto_watchdog: ' + reason + '"]',))
             c.commit()

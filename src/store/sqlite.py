@@ -161,6 +161,26 @@ class Store:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def strategy_trades(self, strategy: str, limit: int = 0) -> list[dict]:
+        """Per-strategy closed trades with NO default global cap (limit=0 = all).
+
+        The old `trades(limit=200)` silently truncated slow strategies out of the
+        window — a busy strategy could push a quiet one out of the sample. Kelly
+        ratchet and any per-strategy statistics must never inherit that cap.
+        """
+        with self._lock:
+            if limit:
+                rows = self._conn.execute(
+                    "SELECT * FROM trades WHERE strategy = ? ORDER BY id DESC LIMIT ?",
+                    (strategy, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM trades WHERE strategy = ? ORDER BY id DESC",
+                    (strategy,),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
     def put_state(self, key: str, value: Any):
         with self._lock:
             serialized = json.dumps(value, default=str)

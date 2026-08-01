@@ -153,6 +153,7 @@ class TelegramBot:
         await self._send("\n".join(lines))
 
     async def _cmd_pause(self):
+        self.store.put_state("manual_pause", "true")
         self.store.put_state("bot_paused", "true")
         reasons_raw = self.store.get_state("pause_reasons") or "[]"
         if isinstance(reasons_raw, str):
@@ -165,6 +166,7 @@ class TelegramBot:
         await self._send("Bot paused.")
 
     async def _cmd_resume(self):
+        self.store.put_state("manual_pause", "false")
         self.store.put_state("bot_paused", "false")
         self.store.put_state("pause_reasons", json.dumps([]))
         logger.warning("TelegramBot: manual resume via /resume")

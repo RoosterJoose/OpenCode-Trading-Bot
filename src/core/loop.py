@@ -33,6 +33,7 @@ from src.adapters.coinbase_advanced import CoinbaseAdvancedAdapter
 from src.adapters.kalshi import KalshiAdapter
 from src.core.execution_engine import ExecutionEngine
 from src.core.risk_governor import RiskGovernor
+from src.core.kelly_ratchet import KellyRatchet
 from src.core.walk_forward import WalkForwardEngine
 from src.core.reconciliation import ReconciliationService
 from src.core.experiment_registry import ExperimentRegistry
@@ -99,6 +100,17 @@ class TradingLoop:
             Trend4h(signal_tracker=self.signal_tracker),
             Fade5m(signal_tracker=self.signal_tracker),
         ]
+        # Seed Kelly ratchets for every strategy so monitoring runs even when no
+        # entry is attempted (quarantine/halt must fire independently of entries).
+        self._kelly_ratchets = {
+            s.name(): KellyRatchet(self.store, s.name(), epoch="2026-07-30")
+            for s in self.strategies
+        }
+        # SMA200 is a native portfolio sleeve rather than a PerpStrategy
+        # object, so seed its monitor explicitly as well.
+        self._kelly_ratchets["sma200_perp"] = KellyRatchet(
+            self.store, "sma200_perp", epoch="2026-07-30"
+        )
 
         self.assets = list(
             config.get("strategies", {})
@@ -504,14 +516,25 @@ class TradingLoop:
             self.store.put_state("self_heal", json.dumps({"action": "restart", "reason": f"entry_stall_{cycles_stalled}cycles"}))
             os._exit(42)
 
-        # Auto-pause check (sharpe_tracker runs daily at 00:05 UTC)
+        # Auto-pause check (composite latches: manual / watchdog / circuit-breaker)
+        # Each writer owns its own latch so no system can clobber another's
+        # pause. bot_paused is the aggregate for legacy readers.
         try:
-            paused = self.store.get_state("bot_paused")
-            if paused == "true":
-                reasons = self.store.get_state("pause_reasons") or "[]"
-                logger.warning("BOT PAUSED by auto-pause logic: %s", reasons)
+            self._paused = False
+            for _latch in ("manual_pause", "watchdog_pause", "circuit_breaker_pause", "bot_paused"):
+                _v = self.store.get_state(_latch)
+                if _v in ("true", "True", True, "1"):
+                    self._paused = True
+                    break
+            if self._paused:
+                reasons = self.store.get_state("pause_reasons") or []
+                if isinstance(reasons, str):
+                    try:
+                        reasons = json.loads(reasons)
+                    except Exception:
+                        reasons = []
+                logger.warning("BOT PAUSED (composite latch): %s", reasons)
                 self._send_alert_ratelimited("bot_paused", f"⚠️ BOT PAUSED: {reasons}", 7200.0)
-                return
         except Exception as e:
             logger.debug("pause check failed: %s", e)
         # Load per-strategy pause flags from sharpe_tracker
@@ -539,6 +562,7 @@ class TradingLoop:
         self.telegram = TelegramBot(token, chat_id, self.store)
         self.regime = RegimeDetector()
         self.notifier = self.telegram
+        self._paused = False
         try:
             raw = self.store.get_state("strategy_budget")
             if raw:
@@ -806,6 +830,18 @@ class TradingLoop:
                          len(exchange.positions),
                          'dead(429)' if self._altfins_cycle > 0 and not self._altfins else 'ok',
                          self._btc_knife_block)
+            # Kelly ratchet monitoring: evaluate each strategy when its trade
+            # sample has grown. Persisted phi is read by the sizing path.
+            for ratchet in self._kelly_ratchets.values():
+                ev = ratchet.evaluate_if_new()
+                if ev is not None:
+                    logger.info(
+                        'KELLY %s phi=%.2f tier=%s n=%d avgR=%+.3f t=%s event=%s %s',
+                        ratchet.strategy, ev["phi"], ev["tier"], ev["n_deduped"],
+                        ev["avgR_net"],
+                        'inf' if ev["t_stat"] == float('inf') else
+                        ('-inf' if ev["t_stat"] == float('-inf') else f'{ev["t_stat"]:.2f}'),
+                        ev["event"], ev["reason"])
 
         # 6. Daily signal journal
         if self._daily_signals_log:
@@ -1056,38 +1092,27 @@ class TradingLoop:
     _kelly_reset_version = 3  # class-level: increment to reset Kelly after major strategy changes
 
     def _kelly_factor_for_strategy(self, strategy: str) -> float:
-        trades = self.store.trades(limit=200)
-        strat_trades = [t for t in trades if t.get("strategy") == strategy and t.get("r_multiple", 0) != 0]
-        # Kelly reset: only count trades from current strategy version (after last code overhaul)
-        # Filter trades with exit_time >= epoch when _kelly_reset_version was last incremented
-        if self._kelly_reset_version >= 3:
-            strat_trades = [t for t in strat_trades if t.get("exit_time", "") >= "2026-07-30"]
-        # Dedupe tp1 partial closes: one trade may produce multiple records (tp1 50% +
-        # final 50%). Aggregate R per unique entry (entry_time+entry_price) so the n<20
-        # gate and win-rate aren't inflated by scale-out bookkeeping.
-        grouped: dict[tuple, dict] = {}
-        for t in strat_trades:
-            key = (t.get("entry_time", ""), t.get("entry_price", 0))
-            if key not in grouped:
-                grouped[key] = {"r": 0.0, "n": 0}
-            grouped[key]["r"] += t.get("r_multiple", 0)
-            grouped[key]["n"] += 1
-        agg = [{"r_multiple": g["r"] / g["n"]} for g in grouped.values()]
-        strat_trades = agg
-        if len(strat_trades) < 20:
-            return 0.25  # lower risk while building trade history
-        wins = [abs(t.get("r_multiple", 0)) for t in strat_trades if t.get("r_multiple", 0) > 0]
-        losses = [abs(t.get("r_multiple", 0)) for t in strat_trades if t.get("r_multiple", 0) < 0]
-        wr = len(wins) / len(strat_trades)
-        avg_r_win = sum(wins) / len(wins) if wins else 0.5
-        avg_r_loss = sum(losses) / len(losses) if losses else 1.0
-        if avg_r_win <= 0 or avg_r_loss <= 0:
-            return 0.25  # degenerate edge: never bet full risk
-        kelly = wr - (1 - wr) / (avg_r_win / avg_r_loss)
-        if kelly <= 0:
-            return 0.0
-        quarter = kelly * 0.25
-        return max(0.0, quarter)
+        """Kelly multiplier from the KellyRatchet monitor (per-strategy).
+
+        The ratchet implements the 4-gate design: trade counter (n<30 -> 0.25,
+        n>=30 -> 0.40, n>=100 -> 0.50), net expectancy (avgR>0), statistical
+        significance (t>1.8 + bootstrap CI low > 0 + median > 0), and downward
+        ratchet (lower-CUSUM quarantine + structural halt at phi=0.0).
+        """
+        ratchet = self._kelly_ratchets.get(strategy)
+        if ratchet is None:
+            ratchet = KellyRatchet(self.store, strategy, epoch=self._KELLY_EPOCH)
+            self._kelly_ratchets[strategy] = ratchet
+        # Promote/penalize only when the trade sample has grown (cheap guard);
+        # sizing reads the persisted phi directly on every call.
+        ratchet.evaluate_if_new()
+        return ratchet.kelly_fraction()
+
+    @property
+    def _KELLY_EPOCH(self) -> str:
+        """Trades before this exit_time are excluded from Kelly statistics
+        (post-strategy-overhaul cold start). Bumped with _kelly_reset_version."""
+        return "2026-07-30"
 
     async def _process_asset(
         self,
@@ -1350,6 +1375,10 @@ class TradingLoop:
             return
 
         # Evaluate entries
+        # Pause gate: exits/stops/trailing above still run, but no NEW entries
+        # may open while the bot is paused (composite latch).
+        if getattr(self, "_paused", False):
+            return
         for strat in self.strategies:
             # Skip if strategy is paused by sharpe_tracker
             if self._paused_strategies:
@@ -1670,6 +1699,9 @@ class TradingLoop:
                 self.store.update_intent_status(int(row["id"]), "rejected", f"invalid_intent: {e}")
 
     async def _execute_intent(self, intent: TradeIntent, exchange: ExecutionEngine, hl: ExchangeAdapter) -> tuple[bool, str]:
+        # Pause gate: no NEW entries (including intents) while the bot is paused.
+        if getattr(self, "_paused", False):
+            return False, "bot_paused"
         now = datetime.now(timezone.utc)
         if now >= intent.expires_at:
             return False, "expired"
