@@ -353,6 +353,16 @@ class Store:
 
     def save_candles(self, asset: str, candles: list, interval: str = "1h") -> None:
         with self._lock:
+            # Schema drift guard: the candles table may predate the fetched_at
+            # column. If it is missing, every INSERT with fetched_at silently
+            # fails (OperationalError caught by callers), leaving the DB stale.
+            cols = {r[1] for r in self._conn.execute("PRAGMA table_info(candles)").fetchall()}
+            if "fetched_at" not in cols:
+                try:
+                    self._conn.execute("ALTER TABLE candles ADD COLUMN fetched_at TEXT")
+                    self._conn.commit()
+                except Exception:
+                    pass
             for cdl in candles[-300:]:
                 self._conn.execute(
                     "INSERT OR REPLACE INTO candles (asset, interval, timestamp, open, high, low, close, volume, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",

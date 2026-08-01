@@ -74,6 +74,10 @@ class CrossSectionalMomentum(PerpStrategy):
             if latest_candle_ts == self._last_entry_candle.get(asset, 0):
                 logger.debug("XS_DIAG %s: candle dedup", asset)
                 return None
+            # New candle seen: record it so we evaluate only once per new bar
+            # (the old code read _last_entry_candle but never wrote it, so XS
+            # re-evaluated every 60s cycle instead of once per candle).
+            self._last_entry_candle[asset] = latest_candle_ts
 
         if asset in self.blocked_assets:
             logger.info("XS_DIAG %s: skip -- blocked_asset", asset)
